@@ -153,6 +153,62 @@ if SERVER_LOG_FILE:
 if not ANSIBLE_SSL_VERIFY:
     urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
+# --- Inbound TLS (sse / streamable-http server) -------------------------------
+# In-process TLS for the network transports. stdio has no network socket, so TLS
+# does not apply there. Off by default; when AWX_MCP_TLS_ENABLE is true the
+# server serves HTTPS and a certificate + private key are required (validated at
+# startup by resolve_tls_kwargs). This is inbound (client -> awx-mcp) TLS and is
+# unrelated to ANSIBLE_SSL_VERIFY, which secures the outbound connection to AWX.
+TLS_ENABLE = os.environ.get("AWX_MCP_TLS_ENABLE", "false").lower() in (
+    "true",
+    "1",
+    "yes",
+)
+TLS_CERT = os.environ.get("AWX_MCP_TLS_CERT") or None
+TLS_KEY = os.environ.get("AWX_MCP_TLS_KEY") or None
+TLS_KEY_PASSWORD = os.environ.get("AWX_MCP_TLS_KEY_PASSWORD") or None
+
+
+def resolve_tls_kwargs(transport: str) -> dict[str, str] | None:
+    """Resolve uvicorn ``ssl_*`` kwargs for inbound TLS, or ``None`` when off.
+
+    Returns ``None`` when TLS is disabled or when the transport is ``stdio``
+    (which has no socket — a warning is logged if TLS was requested anyway).
+    Raises ``ValueError`` when TLS is enabled for a network transport but the
+    certificate/key are missing or point to non-existent files, so a
+    misconfigured server fails fast at startup instead of silently serving
+    plain HTTP.
+    """
+    if not TLS_ENABLE:
+        return None
+    if transport == "stdio":
+        logger.warning(
+            "AWX_MCP_TLS_ENABLE is set but transport=stdio has no network "
+            "socket — TLS settings are ignored for stdio."
+        )
+        return None
+
+    missing = [
+        name
+        for name, value in (
+            ("AWX_MCP_TLS_CERT", TLS_CERT),
+            ("AWX_MCP_TLS_KEY", TLS_KEY),
+        )
+        if not value
+    ]
+    if missing:
+        raise ValueError(
+            "AWX_MCP_TLS_ENABLE=true requires " + " and ".join(missing) + " to be set."
+        )
+    for name, path in (("AWX_MCP_TLS_CERT", TLS_CERT), ("AWX_MCP_TLS_KEY", TLS_KEY)):
+        if not os.path.isfile(path):
+            raise ValueError(f"{name} points to a file that does not exist: {path}")
+
+    kwargs: dict[str, str] = {"ssl_certfile": TLS_CERT, "ssl_keyfile": TLS_KEY}
+    if TLS_KEY_PASSWORD:
+        kwargs["ssl_keyfile_password"] = TLS_KEY_PASSWORD
+    return kwargs
+
 
 def read_tool(func):
     """Register a pure read/GET MCP tool.

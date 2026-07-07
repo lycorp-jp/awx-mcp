@@ -221,6 +221,10 @@ AWX UI에서 미리 생성한 토큰을 사용합니다. 토큰이 만료되지 
 | `AWX_MCP_TRANSPORT` | `stdio` | MCP 트랜스포트 종류: `stdio`, `sse`, `streamable-http`. |
 | `AWX_MCP_HOST` | `127.0.0.1` | `sse` 및 `streamable-http` 트랜스포트의 바인드 호스트. |
 | `AWX_MCP_PORT` | `8000` | `sse` 및 `streamable-http` 트랜스포트의 바인드 포트. |
+| `AWX_MCP_TLS_ENABLE` | `false` | `true`로 설정하면 `sse`/`streamable-http` 서버가 프로세스 내에서 HTTPS로 서빙합니다 (uvicorn). `stdio`에서는 무시됩니다 (네트워크 소켓이 없으며 경고가 로깅됩니다). |
+| `AWX_MCP_TLS_CERT` | 미설정 | 서버 TLS 인증서(PEM) 경로. 네트워크 트랜스포트에서 `AWX_MCP_TLS_ENABLE=true`일 때 필수이며, 경로가 없거나 찾을 수 없으면 서버가 시작 시 즉시 실패합니다. |
+| `AWX_MCP_TLS_KEY` | 미설정 | 서버 TLS 개인 키(PEM) 경로. TLS가 활성화되면 필수입니다. |
+| `AWX_MCP_TLS_KEY_PASSWORD` | 미설정 | 개인 키가 암호화된 경우의 비밀번호. 선택 사항. |
 | `AWX_MCP_USAGE_LOG_FILE` | 미설정 | JSON Lines 형식의 사용 로그 파일 경로. MCP 도구 호출마다 하나의 JSON 문서(`@timestamp`, `user`, `tool`, `kind`, `trace_id`, `server_version`, `success`, `latency_ms`, `transport`, `awx_host`, 실패 시 `error{type,message}`)가 기록됩니다. 미설정 시 파일이 생성되지 않고 계측 자체가 비활성화됩니다. [상세 사용 로그](#상세-사용-로그) 섹션 참조. |
 | `AWX_MCP_SERVER_LOG_FILE` | 미설정 | 서버 진단 로그 파일 경로. 기존 stderr 진단/에러 출력을 그대로 파일에도 기록합니다. 미설정 시 stderr에만 출력되고 파일은 생성되지 않습니다. |
 | `AWX_MCP_SERVER_LOG_FORMAT` | `plain` | 서버 진단 로그 형식: `plain` 또는 `json`. |
@@ -231,6 +235,23 @@ AWX UI에서 미리 생성한 토큰을 사용합니다. 토큰이 만료되지 
 TLS 인증서 검증은 **기본적으로 켜져 있습니다** (`ANSIBLE_SSL_VERIFY=true`). AWX 인스턴스가 사설/내부 CA가 발급한 인증서(또는 자체 서명 인증서)를 사용한다면, `ANSIBLE_CA_BUNDLE`에 CA 번들(PEM) 경로를 설정하세요 — 검증을 비활성화하지 않고도 해당 CA를 신뢰하게 되며, 이는 검증 비활성화보다 권장되는 방법입니다.
 
 `ANSIBLE_SSL_VERIFY=false`로 설정하면 검증이 완전히 비활성화됩니다. 이 값을 사용할 때마다 서버가 경고를 로깅하며, 개발 환경에서만 사용해야 합니다. 스킴이 없는 `ANSIBLE_BASE_URL` 호스트는 자동으로 `https://`로 승격됩니다. 명시적인 `http://` URL은 그대로 사용되지만, API 토큰이 암호화되지 않은 채 전송되므로 서버가 경고를 로깅합니다.
+
+### HTTPS로 서빙 (인바운드 TLS)
+
+이는 **인바운드** TLS입니다 — MCP 클라이언트에서 이 서버로의 연결을 암호화하는 것으로, `ANSIBLE_SSL_VERIFY`가 제어하는 아웃바운드 AWX 인증서 검증과는 방향이 다릅니다. 두 가지를 혼동하지 마세요.
+
+`sse`와 `streamable-http` 트랜스포트에만 적용됩니다. `stdio`는 네트워크 소켓이 없는 로컬 파이프이므로 TLS가 적용되지 않으며, 보안은 프로세스/호스트 격리에서 나옵니다.
+
+활성화하려면 `AWX_MCP_TLS_ENABLE=true`와 함께 `AWX_MCP_TLS_CERT`, `AWX_MCP_TLS_KEY`를 설정하세요 (키가 암호화된 경우 `AWX_MCP_TLS_KEY_PASSWORD`도 설정):
+
+```bash
+export AWX_MCP_TLS_ENABLE=true
+export AWX_MCP_TLS_CERT=/path/to/server.crt
+export AWX_MCP_TLS_KEY=/path/to/server.key
+uv run awx-mcp --transport streamable-http --host 0.0.0.0 --port 8443
+```
+
+**중요:** HTTPS는 트래픽만 암호화할 뿐, *누가* 접속하는지는 인증하지 않습니다. 이 서버는 요청 단위의 클라이언트 인증이 없으며, 모든 AWX 호출에 단일 `ANSIBLE_TOKEN`을 사용합니다. 네트워크에 노출된 HTTPS 엔드포인트는 네트워크 정책, 방화벽, 또는 인증 기능을 갖춘 리버스 프록시로 여전히 보호해야 합니다. 쿠버네티스에서는 보통 ingress에서 TLS를 종료하는 방식을 사용하며, 파드까지 종단 간 암호화가 필요한 경우에만 프로세스 내 TLS가 필요합니다.
 
 ### 상세 사용 로그
 

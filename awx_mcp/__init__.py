@@ -5,7 +5,7 @@
 import argparse
 
 from . import tools  # noqa: F401
-from .server import TRANSPORT, VALID_TRANSPORTS, logger, mcp
+from .server import TRANSPORT, VALID_TRANSPORTS, logger, mcp, resolve_tls_kwargs
 
 
 def main():
@@ -44,12 +44,31 @@ def main():
 
     if args.transport == "stdio":
         logger.info("Starting awx-mcp (transport=stdio)")
-    else:
-        logger.info(
-            "Starting awx-mcp (transport=%s) on %s:%s",
-            args.transport,
-            mcp.settings.host,
-            mcp.settings.port,
-        )
+        mcp.run(transport="stdio")
+        return
 
-    mcp.run(transport=args.transport)
+    # Network transports (sse / streamable-http): optionally serve over TLS.
+    # resolve_tls_kwargs validates the cert/key and raises on misconfiguration.
+    tls_kwargs = resolve_tls_kwargs(args.transport)
+    logger.info(
+        "Starting awx-mcp (transport=%s, %s) on %s:%s",
+        args.transport,
+        "https" if tls_kwargs else "http",
+        mcp.settings.host,
+        mcp.settings.port,
+    )
+
+    if tls_kwargs:
+        # FastMCP.run() cannot pass TLS options to uvicorn, so drive uvicorn
+        # directly on the transport's ASGI app with the resolved ssl_* kwargs.
+        import uvicorn
+
+        app = mcp.sse_app() if args.transport == "sse" else mcp.streamable_http_app()
+        uvicorn.run(
+            app,
+            host=mcp.settings.host,
+            port=mcp.settings.port,
+            **tls_kwargs,
+        )
+    else:
+        mcp.run(transport=args.transport)

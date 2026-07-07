@@ -221,6 +221,10 @@ The server automatically creates and caches an OAuth2 token on your behalf.
 | `AWX_MCP_TRANSPORT` | `stdio` | MCP transport to use: `stdio`, `sse`, or `streamable-http`. |
 | `AWX_MCP_HOST` | `127.0.0.1` | Bind host for `sse` and `streamable-http` transports. |
 | `AWX_MCP_PORT` | `8000` | Bind port for `sse` and `streamable-http` transports. |
+| `AWX_MCP_TLS_ENABLE` | `false` | When `true`, the `sse`/`streamable-http` server serves HTTPS in-process (uvicorn). Ignored for `stdio` (no network socket; a warning is logged). |
+| `AWX_MCP_TLS_CERT` | unset | Path to the server's TLS certificate (PEM). Required when `AWX_MCP_TLS_ENABLE=true` on a network transport; the server fails fast at startup if missing or not found. |
+| `AWX_MCP_TLS_KEY` | unset | Path to the server's TLS private key (PEM). Required when TLS is enabled. |
+| `AWX_MCP_TLS_KEY_PASSWORD` | unset | Password for the private key, if it is encrypted. Optional. |
 | `AWX_MCP_USAGE_LOG_FILE` | unset | Path to a JSON Lines usage log; every MCP tool call is recorded as one JSON document (`@timestamp`, `user`, `tool`, `kind`, `trace_id`, `server_version`, `success`, `latency_ms`, `transport`, `awx_host`, `error{type,message}` on failure). Unset means no file is created and instrumentation is disabled. See [Verbose usage logging](#verbose-usage-logging). |
 | `AWX_MCP_SERVER_LOG_FILE` | unset | Path to a server diagnostic log file, mirroring the existing stderr diagnostics and errors. Unset means stderr only, no file. |
 | `AWX_MCP_SERVER_LOG_FORMAT` | `plain` | Server diagnostic log format: `plain` or `json`. |
@@ -231,6 +235,23 @@ The server automatically creates and caches an OAuth2 token on your behalf.
 TLS certificate verification is **on by default** (`ANSIBLE_SSL_VERIFY=true`). If your AWX instance uses a certificate issued by a private/internal CA (or a self-signed certificate), set `ANSIBLE_CA_BUNDLE` to the path of the CA bundle (PEM) — this lets the server trust it while keeping verification enabled, which is the recommended approach over disabling verification.
 
 Setting `ANSIBLE_SSL_VERIFY=false` disables verification entirely; the server logs a warning whenever this is used, and it should only be done in development environments. A bare `ANSIBLE_BASE_URL` host with no scheme is automatically upgraded to `https://`; an explicit `http://` URL is honored but the server logs a warning since the API token would be sent unencrypted.
+
+### Serving over HTTPS (inbound TLS)
+
+This is **inbound** TLS — encrypting the connection from MCP clients to this server — which is a different direction from the outbound AWX certificate verification controlled by `ANSIBLE_SSL_VERIFY`. Don't confuse the two.
+
+It only applies to the `sse` and `streamable-http` transports. `stdio` has no network socket — it's a local pipe between the MCP client and this process — so TLS doesn't apply there; security instead comes from process/host isolation.
+
+To enable, set `AWX_MCP_TLS_ENABLE=true` along with `AWX_MCP_TLS_CERT` and `AWX_MCP_TLS_KEY` (and `AWX_MCP_TLS_KEY_PASSWORD` if the key is encrypted):
+
+```bash
+export AWX_MCP_TLS_ENABLE=true
+export AWX_MCP_TLS_CERT=/path/to/server.crt
+export AWX_MCP_TLS_KEY=/path/to/server.key
+uv run awx-mcp --transport streamable-http --host 0.0.0.0 --port 8443
+```
+
+**Important:** HTTPS only encrypts traffic — it does not authenticate *who* is connecting. This server has no per-request client authentication; it uses a single `ANSIBLE_TOKEN` for all AWX calls. A network-exposed HTTPS endpoint must still be protected by network policy, a firewall, or an authenticating reverse proxy. In Kubernetes, terminating TLS at the ingress is the usual approach; in-process TLS here is only needed when you require end-to-end encryption all the way to the pod.
 
 ### Verbose usage logging
 
