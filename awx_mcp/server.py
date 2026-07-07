@@ -10,6 +10,7 @@ import json
 import logging
 import os
 from datetime import datetime, timezone
+from urllib.parse import urlparse
 
 import urllib3
 from mcp.server.fastmcp import FastMCP
@@ -40,11 +41,17 @@ ANSIBLE_BASE_URL = os.environ.get("ANSIBLE_BASE_URL")
 ANSIBLE_USERNAME = os.environ.get("ANSIBLE_USERNAME")
 ANSIBLE_PASSWORD = os.environ.get("ANSIBLE_PASSWORD")
 ANSIBLE_TOKEN = os.environ.get("ANSIBLE_TOKEN")
-ANSIBLE_SSL_VERIFY = os.environ.get("ANSIBLE_SSL_VERIFY", "false").lower() in (
+# TLS: verification is ON by default (secure). Set ANSIBLE_SSL_VERIFY=false to
+# turn it off (a warning is logged). ANSIBLE_CA_BUNDLE may point to a custom CA
+# bundle / self-signed certificate to trust instead of disabling verification.
+# The resolved requests `verify=` value is assigned to ANSIBLE_SSL_VERIFY below,
+# once the logger exists (so the disable/plain-http warnings can be emitted).
+_SSL_VERIFY_ENABLED = os.environ.get("ANSIBLE_SSL_VERIFY", "true").lower() in (
     "true",
     "1",
     "yes",
 )
+ANSIBLE_CA_BUNDLE = os.environ.get("ANSIBLE_CA_BUNDLE") or None
 ENABLE_CREDENTIAL_MANAGEMENT = os.environ.get(
     "AWX_MCP_ENABLE_CREDENTIAL_MANAGEMENT", "false"
 ).lower() in ("true", "1", "yes")
@@ -74,6 +81,42 @@ logging.basicConfig(
     format=_PLAIN_LOG_FORMAT,
 )
 logger = logging.getLogger("ansible-mcp")
+
+# --- Base URL scheme: default to HTTPS ----------------------------------------
+# awx-mcp talks to AWX over HTTPS by default. A bare host (no scheme) is upgraded
+# to https://; an explicit http:// URL is honored but warned about, since it
+# sends the AWX token and all traffic in clear text.
+_parsed_base = urlparse(ANSIBLE_BASE_URL)
+if not _parsed_base.scheme:
+    ANSIBLE_BASE_URL = "https://" + ANSIBLE_BASE_URL
+elif _parsed_base.scheme == "http":
+    logger.warning(
+        "ANSIBLE_BASE_URL uses http:// — the AWX token and all traffic are sent "
+        "unencrypted. Use https:// in production."
+    )
+
+# --- TLS verification resolution ----------------------------------------------
+# ANSIBLE_SSL_VERIFY becomes the value passed to requests' `verify=`:
+#   False   -> verification disabled (insecure; warning logged)
+#   <path>  -> custom CA bundle (from ANSIBLE_CA_BUNDLE)
+#   True    -> system trust store (default)
+if not _SSL_VERIFY_ENABLED:
+    ANSIBLE_SSL_VERIFY: bool | str = False
+    logger.warning(
+        "TLS certificate verification is DISABLED (ANSIBLE_SSL_VERIFY=false). "
+        "Connections to %s are vulnerable to man-in-the-middle attacks. Enable "
+        "verification (and set ANSIBLE_CA_BUNDLE for a private CA) in production.",
+        ANSIBLE_BASE_URL,
+    )
+elif ANSIBLE_CA_BUNDLE:
+    if not os.path.isfile(ANSIBLE_CA_BUNDLE):
+        raise ValueError(
+            f"ANSIBLE_CA_BUNDLE points to a file that does not exist: "
+            f"{ANSIBLE_CA_BUNDLE}"
+        )
+    ANSIBLE_SSL_VERIFY = ANSIBLE_CA_BUNDLE
+else:
+    ANSIBLE_SSL_VERIFY = True
 
 
 class _JsonLogFormatter(logging.Formatter):
