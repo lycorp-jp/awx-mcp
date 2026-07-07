@@ -59,8 +59,7 @@ Then point your MCP client at the clone using `uv run --directory <path>`. Repla
       "args": ["run", "--directory", "/path/to/awx-mcp", "awx-mcp"],
       "env": {
         "ANSIBLE_BASE_URL": "https://awx.example.com/",
-        "ANSIBLE_TOKEN": "your_api_token",
-        "ANSIBLE_SSL_VERIFY": "false"
+        "ANSIBLE_TOKEN": "your_api_token"
       }
     }
   }
@@ -73,7 +72,6 @@ Then point your MCP client at the clone using `uv run --directory <path>`. Repla
 claude mcp add awx \
   -e ANSIBLE_BASE_URL=https://awx.example.com/ \
   -e ANSIBLE_TOKEN=your_api_token \
-  -e ANSIBLE_SSL_VERIFY=false \
   -- uv run --directory /path/to/awx-mcp awx-mcp
 ```
 
@@ -155,7 +153,6 @@ uv sync
 # 3. Set required environment variables
 export ANSIBLE_BASE_URL="https://awx.example.com/"
 export ANSIBLE_TOKEN="your_api_token"
-export ANSIBLE_SSL_VERIFY="false"
 
 # 4a. Run with stdio (default — for local MCP clients)
 uv run awx-mcp
@@ -216,7 +213,8 @@ The server automatically creates and caches an OAuth2 token on your behalf.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `ANSIBLE_SSL_VERIFY` | `false` | SSL certificate verification (`true`/`false`) |
+| `ANSIBLE_SSL_VERIFY` | `true` | TLS certificate verification (`true`/`false`). Verification is **on by default**. Set to `false` to disable verification (**insecure** — a warning is logged; only for dev/self-signed setups without a CA bundle). |
+| `ANSIBLE_CA_BUNDLE` | unset | Path to a custom CA bundle / self-signed certificate (PEM) to trust when verification is enabled. Lets you connect to an AWX instance with a private CA without disabling verification. The server fails fast at startup if the path doesn't exist. |
 | `ANSIBLE_LOG_LEVEL` | `INFO` | Log level (`DEBUG`, `INFO`, `WARNING`, `ERROR`) |
 | `AWX_MCP_ENABLE_CREDENTIAL_MANAGEMENT` | `false` | Opt-in for the 4 credential/user write tools that collect sensitive data via Form-mode elicitation. See [Credential Management](#credential-management-opt-in). |
 | `AWX_MCP_READ_ONLY` | `false` | When `true`, all write/destructive tools are unregistered at startup; only read-only tools (`list_*`/`get_*`) are exposed. Useful for safe inspection or audit-only automation. |
@@ -227,6 +225,12 @@ The server automatically creates and caches an OAuth2 token on your behalf.
 | `AWX_MCP_SERVER_LOG_FILE` | unset | Path to a server diagnostic log file, mirroring the existing stderr diagnostics and errors. Unset means stderr only, no file. |
 | `AWX_MCP_SERVER_LOG_FORMAT` | `plain` | Server diagnostic log format: `plain` or `json`. |
 | `AWX_MCP_LOG_BACKUP_COUNT` | `7` | Number of rotated log files to retain. Both log files rotate daily at midnight (UTC) with a date suffix. |
+
+### TLS / certificate verification
+
+TLS certificate verification is **on by default** (`ANSIBLE_SSL_VERIFY=true`). If your AWX instance uses a certificate issued by a private/internal CA (or a self-signed certificate), set `ANSIBLE_CA_BUNDLE` to the path of the CA bundle (PEM) — this lets the server trust it while keeping verification enabled, which is the recommended approach over disabling verification.
+
+Setting `ANSIBLE_SSL_VERIFY=false` disables verification entirely; the server logs a warning whenever this is used, and it should only be done in development environments. A bare `ANSIBLE_BASE_URL` host with no scheme is automatically upgraded to `https://`; an explicit `http://` URL is honored but the server logs a warning since the API token would be sent unencrypted.
 
 ### Verbose usage logging
 
@@ -264,8 +268,7 @@ Add to `claude_desktop_config.json`:
       "args": ["run", "--directory", "/path/to/awx-mcp", "awx-mcp"],
       "env": {
         "ANSIBLE_BASE_URL": "https://awx.example.com/",
-        "ANSIBLE_TOKEN": "your_api_token",
-        "ANSIBLE_SSL_VERIFY": "false"
+        "ANSIBLE_TOKEN": "your_api_token"
       }
     }
   }
@@ -278,7 +281,6 @@ Add to `claude_desktop_config.json`:
 claude mcp add awx \
   -e ANSIBLE_BASE_URL=https://awx.example.com/ \
   -e ANSIBLE_TOKEN=your_api_token \
-  -e ANSIBLE_SSL_VERIFY=false \
   -- uv run --directory /path/to/awx-mcp awx-mcp
 ```
 
@@ -293,8 +295,7 @@ Add to the MCP server config:
     "args": ["run", "--directory", "/path/to/awx-mcp", "awx-mcp"],
     "env": {
       "ANSIBLE_BASE_URL": "https://awx.example.com/",
-      "ANSIBLE_TOKEN": "your_api_token",
-      "ANSIBLE_SSL_VERIFY": "false"
+      "ANSIBLE_TOKEN": "your_api_token"
     }
   }
 }
@@ -677,7 +678,7 @@ You need to set either `ANSIBLE_TOKEN` or both `ANSIBLE_USERNAME` and `ANSIBLE_P
 
 **SSL certificate error**
 
-If you're using a self-signed certificate, set `ANSIBLE_SSL_VERIFY` to `"false"` (the string, not a boolean).
+TLS verification is on by default. If your AWX instance uses a certificate from a private/internal CA or a self-signed certificate, set `ANSIBLE_CA_BUNDLE` to the CA/certificate's PEM file path — this keeps verification enabled while trusting it. Only as a last resort (e.g. you can't obtain the CA certificate), set `ANSIBLE_SSL_VERIFY` to `"false"` (the string, not a boolean); this disables verification entirely and the server logs a warning. See **TLS / certificate verification** above for details.
 
 **Connection refused / timeout**
 
