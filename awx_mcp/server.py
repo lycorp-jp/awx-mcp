@@ -6,12 +6,16 @@ Ansible MCP Server - Server Configuration
 FastMCP instance, environment configuration, and logging setup.
 """
 
+import json
 import logging
 import os
+from datetime import datetime, timezone
 
 import urllib3
 from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
+
+from .usage import instrument_tool, make_timed_rotating_handler
 
 # Transport configuration
 TRANSPORT = os.environ.get("AWX_MCP_TRANSPORT", "stdio").lower()
@@ -63,11 +67,44 @@ if not ANSIBLE_TOKEN and not (ANSIBLE_USERNAME and ANSIBLE_PASSWORD):
     )
 
 # Logging setup
+_PLAIN_LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+
 logging.basicConfig(
     level=os.environ.get("ANSIBLE_LOG_LEVEL", "INFO").upper(),
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    format=_PLAIN_LOG_FORMAT,
 )
 logger = logging.getLogger("ansible-mcp")
+
+
+class _JsonLogFormatter(logging.Formatter):
+    """Render each diagnostic log record as a single JSON object (one per line)."""
+
+    def format(self, record: logging.LogRecord) -> str:
+        payload = {
+            "timestamp": datetime.fromtimestamp(
+                record.created, tz=timezone.utc
+            ).isoformat(),
+            "level": record.levelname,
+            "logger": record.name,
+            "message": record.getMessage(),
+        }
+        return json.dumps(payload, ensure_ascii=False)
+
+
+# Optional diagnostic log file (opt-in). When AWX_MCP_SERVER_LOG_FILE is set, the
+# existing logging output is ALSO written to that file (stderr behaviour is
+# unchanged). Format is selectable via AWX_MCP_SERVER_LOG_FORMAT (plain|json).
+# stdout is never touched — it is reserved for the stdio MCP protocol.
+SERVER_LOG_FILE = os.environ.get("AWX_MCP_SERVER_LOG_FILE")
+SERVER_LOG_FORMAT = os.environ.get("AWX_MCP_SERVER_LOG_FORMAT", "plain").lower()
+
+if SERVER_LOG_FILE:
+    _server_log_handler = make_timed_rotating_handler(SERVER_LOG_FILE)
+    if SERVER_LOG_FORMAT == "json":
+        _server_log_handler.setFormatter(_JsonLogFormatter())
+    else:
+        _server_log_handler.setFormatter(logging.Formatter(_PLAIN_LOG_FORMAT))
+    logging.getLogger().addHandler(_server_log_handler)
 
 # Suppress InsecureRequestWarning when SSL verification is disabled
 if not ANSIBLE_SSL_VERIFY:
@@ -80,7 +117,9 @@ def read_tool(func):
     Always registered (read tools are exposed even in read-only mode) and
     annotated with ``readOnlyHint=True``.
     """
-    return mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))(func)
+    return mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))(
+        instrument_tool(func)
+    )
 
 
 def write_tool(*, destructive: bool = False, idempotent: bool = False):
@@ -100,7 +139,7 @@ def write_tool(*, destructive: bool = False, idempotent: bool = False):
                 destructiveHint=destructive,
                 idempotentHint=idempotent,
             )
-        )(func)
+        )(instrument_tool(func))
 
     return deco
 
@@ -125,7 +164,7 @@ def maybe_credential_management_tool(func):
                 destructiveHint=True,
                 idempotentHint=False,
             )
-        )(func)
+        )(instrument_tool(func))
     return func
 
 

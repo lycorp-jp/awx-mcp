@@ -223,6 +223,16 @@ The server automatically creates and caches an OAuth2 token on your behalf.
 | `AWX_MCP_TRANSPORT` | `stdio` | MCP transport to use: `stdio`, `sse`, or `streamable-http`. |
 | `AWX_MCP_HOST` | `127.0.0.1` | Bind host for `sse` and `streamable-http` transports. |
 | `AWX_MCP_PORT` | `8000` | Bind port for `sse` and `streamable-http` transports. |
+| `AWX_MCP_USAGE_LOG_FILE` | unset | Path to a JSON Lines usage log; every MCP tool call is recorded as one JSON document (`@timestamp`, `user`, `tool`, `kind`, `trace_id`, `server_version`, `success`, `latency_ms`, `transport`, `awx_host`, `error{type,message}` on failure). Unset means no file is created and instrumentation is disabled. See [Verbose usage logging](#verbose-usage-logging). |
+| `AWX_MCP_SERVER_LOG_FILE` | unset | Path to a server diagnostic log file, mirroring the existing stderr diagnostics and errors. Unset means stderr only, no file. |
+| `AWX_MCP_SERVER_LOG_FORMAT` | `plain` | Server diagnostic log format: `plain` or `json`. |
+| `AWX_MCP_LOG_BACKUP_COUNT` | `7` | Number of rotated log files to retain. Both log files rotate daily at midnight (UTC) with a date suffix. |
+
+### Verbose usage logging
+
+Usage logging is opt-in: set `AWX_MCP_USAGE_LOG_FILE` to a writable path to start recording one JSON document per tool call in [JSON Lines](https://jsonlines.org/) format, designed to be picked up by external log collectors (Filebeat, Fluentd, etc.) for later collection and statistics. Logs are never written to stdout — the MCP stdio transport uses stdout for protocol messages, so writing logs there would corrupt the protocol stream. No log data is sent over the network by the server itself; it only writes to the local file(s) you configure.
+
+Each entry also carries a `kind` field: `"tool"` for regular MCP tool calls, and `"internal_api"` for the one-time `/api/v2/me/` user-resolution call the server makes at startup (recorded with `tool: "GET /api/v2/me/"`). This lets your statistics separate real tool usage from that internal overhead.
 
 ---
 

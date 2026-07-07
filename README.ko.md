@@ -223,6 +223,16 @@ AWX UI에서 미리 생성한 토큰을 사용합니다. 토큰이 만료되지 
 | `AWX_MCP_TRANSPORT` | `stdio` | MCP 트랜스포트 종류: `stdio`, `sse`, `streamable-http`. |
 | `AWX_MCP_HOST` | `127.0.0.1` | `sse` 및 `streamable-http` 트랜스포트의 바인드 호스트. |
 | `AWX_MCP_PORT` | `8000` | `sse` 및 `streamable-http` 트랜스포트의 바인드 포트. |
+| `AWX_MCP_USAGE_LOG_FILE` | 미설정 | JSON Lines 형식의 사용 로그 파일 경로. MCP 도구 호출마다 하나의 JSON 문서(`@timestamp`, `user`, `tool`, `kind`, `trace_id`, `server_version`, `success`, `latency_ms`, `transport`, `awx_host`, 실패 시 `error{type,message}`)가 기록됩니다. 미설정 시 파일이 생성되지 않고 계측 자체가 비활성화됩니다. [상세 사용 로그](#상세-사용-로그) 섹션 참조. |
+| `AWX_MCP_SERVER_LOG_FILE` | 미설정 | 서버 진단 로그 파일 경로. 기존 stderr 진단/에러 출력을 그대로 파일에도 기록합니다. 미설정 시 stderr에만 출력되고 파일은 생성되지 않습니다. |
+| `AWX_MCP_SERVER_LOG_FORMAT` | `plain` | 서버 진단 로그 형식: `plain` 또는 `json`. |
+| `AWX_MCP_LOG_BACKUP_COUNT` | `7` | 로테이션된 로그 파일 보관 개수. 두 로그 파일 모두 매일 자정(UTC)에 날짜 접미사를 붙여 로테이션됩니다. |
+
+### 상세 사용 로그
+
+사용 로그는 opt-in 방식입니다. `AWX_MCP_USAGE_LOG_FILE`에 쓰기 가능한 경로를 설정하면, 도구 호출마다 하나의 JSON 문서를 [JSON Lines](https://jsonlines.org/) 형식으로 기록하기 시작합니다. 이 형식은 Filebeat, Fluentd 등 외부 로그 수집기가 나중에 수집·통계 처리하기 쉽도록 설계되었습니다. 로그는 stdout으로 절대 출력되지 않습니다 — MCP stdio 트랜스포트는 stdout을 프로토콜 메시지 전송에 사용하므로, 여기에 로그를 쓰면 프로토콜 스트림이 손상됩니다. 서버 자체는 로그 데이터를 네트워크로 전송하지 않으며, 설정한 로컬 파일에만 기록합니다.
+
+각 항목에는 `kind` 필드도 포함됩니다: 일반 MCP 도구 호출은 `"tool"`, 서버가 시작 시 한 번 호출하는 `/api/v2/me/` 사용자 확인 요청은 `"internal_api"`(`tool: "GET /api/v2/me/"`로 기록)로 구분됩니다. 이를 통해 통계에서 실제 도구 사용량과 내부 오버헤드를 분리할 수 있습니다.
 
 ---
 
