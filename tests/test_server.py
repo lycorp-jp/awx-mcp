@@ -32,7 +32,9 @@ ALWAYS_REGISTERED = (
 )
 
 
-def _list_registered_tools(env_value: str | None) -> list[str]:
+def _list_registered_tools(
+    env_value: str | None, ad_hoc_value: str | None = None
+) -> list[str]:
     """Import the package in a fresh subprocess and return registered tool names."""
     script = textwrap.dedent(
         """
@@ -52,6 +54,8 @@ def _list_registered_tools(env_value: str | None) -> list[str]:
     }
     if env_value is not None:
         env["AWX_MCP_ENABLE_CREDENTIAL_MANAGEMENT"] = env_value
+    if ad_hoc_value is not None:
+        env["AWX_MCP_ENABLE_AD_HOC_COMMAND"] = ad_hoc_value
 
     result = subprocess.run(
         [sys.executable, "-c", script],
@@ -95,15 +99,35 @@ def test_truthy_aliases_register_gated_tools():
             assert name in tools, f"{name} should register for env value {value!r}"
 
 
-def test_default_total_tool_count_is_142():
+def test_default_total_tool_count_is_141():
+    # Both sensitive-tool flags off: 146 total - 4 credential/user - 1 ad hoc.
     tools = _list_registered_tools(env_value=None)
-    assert len(tools) == 142, (
-        f"Expected 142 tools when credential management is disabled, got {len(tools)}"
+    assert len(tools) == 141, (
+        f"Expected 141 tools with both gates disabled, got {len(tools)}"
     )
 
 
-def test_enabled_total_tool_count_is_146():
+def test_credential_management_enabled_tool_count_is_145():
+    # Credential management on, ad hoc still off: 141 + 4.
     tools = _list_registered_tools(env_value="true")
-    assert len(tools) == 146, (
-        f"Expected 146 tools when credential management is enabled, got {len(tools)}"
+    assert len(tools) == 145, (
+        f"Expected 145 tools with credential management enabled, got {len(tools)}"
     )
+
+
+def test_all_gates_enabled_tool_count_is_146():
+    tools = _list_registered_tools(env_value="true", ad_hoc_value="true")
+    assert len(tools) == 146, (
+        f"Expected 146 tools with all gates enabled, got {len(tools)}"
+    )
+
+
+def test_ad_hoc_command_gated_by_default():
+    assert "run_ad_hoc_command" not in _list_registered_tools(env_value=None)
+
+
+def test_ad_hoc_command_registered_when_enabled():
+    tools = _list_registered_tools(env_value=None, ad_hoc_value="true")
+    assert "run_ad_hoc_command" in tools
+    # get_ad_hoc_command / cancel_ad_hoc_command are not gated by this flag.
+    assert "get_ad_hoc_command" in _list_registered_tools(env_value=None)

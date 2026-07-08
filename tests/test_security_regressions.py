@@ -123,12 +123,16 @@ def test_gated_tools_registered_when_flag_true():
         assert name in tools, f"{name} must be registered when flag is true"
 
 
-def test_default_tool_count_is_142():
-    """Smoke: total tool count assertion for default config."""
+def test_default_tool_count_is_141():
+    """Smoke: total tool count for default config (credential + ad-hoc gates off).
+
+    146 total minus 4 credential/user tools minus 1 ad hoc command tool.
+    """
     tools = _run_subprocess_tool_listing(env_value=None)
-    assert len(tools) == 142
+    assert len(tools) == 141
 
 
-def test_opt_in_tool_count_is_146():
+def test_credential_opt_in_tool_count_is_145():
+    """Credential management on, ad hoc still gated off: 141 + 4."""
     tools = _run_subprocess_tool_listing(env_value="true")
-    assert len(tools) == 146
+    assert len(tools) == 145

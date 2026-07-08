@@ -23,7 +23,6 @@ import inspect
 import json
 import logging
 import os
-import re
 import threading
 import time
 import uuid
@@ -32,6 +31,8 @@ from datetime import datetime, timezone
 from logging.handlers import TimedRotatingFileHandler
 from typing import Any
 from urllib.parse import urlparse
+
+from .utils import mask_secrets
 
 logger = logging.getLogger("ansible-mcp.usage")
 
@@ -56,25 +57,6 @@ def make_timed_rotating_handler(path: str) -> TimedRotatingFileHandler:
     return TimedRotatingFileHandler(
         path, when="midnight", utc=True, backupCount=log_backup_count()
     )
-
-
-# --- Secret masking -----------------------------------------------------------
-# Applied to any error message before it is serialized into a usage document, so
-# a leaked Authorization header / token / password never reaches the log file.
-_SECRET_PATTERNS: list[tuple[re.Pattern[str], str]] = [
-    (re.compile(r"Bearer\s+\S+", re.IGNORECASE), "Bearer ***"),
-    (re.compile(r"(token[\"']?\s*[:=]\s*)\S+", re.IGNORECASE), r"\1***"),
-    (re.compile(r"(password[\"']?\s*[:=]\s*)\S+", re.IGNORECASE), r"\1***"),
-]
-
-
-def mask_secrets(text: str) -> str:
-    """Redact bearer tokens, token=... and password=... occurrences from text."""
-    if not text:
-        return text
-    for pattern, replacement in _SECRET_PATTERNS:
-        text = pattern.sub(replacement, text)
-    return text
 
 
 # --- User + version resolution ------------------------------------------------

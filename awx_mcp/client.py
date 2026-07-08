@@ -33,8 +33,17 @@ from .server import (
     ANSIBLE_SSL_VERIFY,
     ANSIBLE_TOKEN,
     ANSIBLE_USERNAME,
+    READ_ONLY,
     logger,
 )
+from .utils import mask_secrets
+
+
+def _default_port(scheme: str) -> int | None:
+    """Effective default port for a scheme, so ``https://h`` and ``https://h:443``
+    compare equal in origin validation."""
+    return {"https": 443, "http": 80}.get(scheme)
+
 
 DEFAULT_CONNECT_TIMEOUT = 10
 DEFAULT_READ_TIMEOUT = int(os.environ.get("AWX_HTTP_TIMEOUT_READ", "90"))
@@ -143,10 +152,13 @@ class AnsibleClient:
         if "csrftoken" in self.session.cookies:
             token_headers["X-CSRFToken"] = self.session.cookies["csrftoken"]
 
+        # Mint a read-scoped token in read-only mode so the token's actual AWX
+        # permissions match the tool gating (defense-in-depth if the token
+        # leaks), otherwise a write-scoped token for full functionality.
         token_data = {
             "description": "MCP Server Token",
             "application": None,
-            "scope": "write",
+            "scope": "read" if READ_ONLY else "write",
         }
 
         token_response = self.session.post(
@@ -171,13 +183,20 @@ class AnsibleClient:
             )
 
     def _validate_url(self, url: str) -> str:
-        """Validate that URL matches base_url origin (scheme, hostname, port)."""
+        """Validate that URL matches base_url origin (scheme, hostname, port).
+
+        Ports are compared by their effective value, so an AWX ``next`` link that
+        spells out the default port (``https://host:443/...``) is not rejected
+        against a base URL written without it (``https://host``).
+        """
         parsed_base = urlparse(self.base_url)
         parsed_url = urlparse(url)
+        base_port = parsed_base.port or _default_port(parsed_base.scheme)
+        url_port = parsed_url.port or _default_port(parsed_url.scheme)
         if (
             parsed_url.scheme != parsed_base.scheme
             or parsed_url.hostname != parsed_base.hostname
-            or parsed_url.port != parsed_base.port
+            or url_port != base_port
         ):
             raise ValueError(
                 f"URL origin mismatch: {url} does not match base URL {self.base_url}"
@@ -190,15 +209,32 @@ class AnsibleClient:
             headers["Authorization"] = f"Bearer {self.token}"
         return headers
 
-    def request(
+    def _resolve_url(self, endpoint: str) -> str:
+        """Resolve an endpoint (relative path or absolute AWX URL) to a full URL.
+
+        Relative paths are appended to ``base_url`` so a base-URL path prefix
+        (subpath deployment, e.g. ``https://host/awx``) is preserved — plain
+        ``urljoin`` would drop it because the endpoints start with ``/api/``.
+        Absolute URLs (e.g. an AWX ``next`` link) are used as-is. All results are
+        origin-validated.
+        """
+        if urlparse(endpoint).scheme:
+            return self._validate_url(endpoint)
+        if endpoint.startswith("/"):
+            return self._validate_url(self.base_url + endpoint)
+        return self._validate_url(urljoin(self.base_url + "/", endpoint))
+
+    def _send(
         self,
         method: str,
         endpoint: str,
         params: dict | None = None,
         data: dict | None = None,
-    ) -> dict[str, Any]:
-        """Make a request to the Ansible API."""
-        url = self._validate_url(urljoin(self.base_url, endpoint))
+    ) -> requests.Response:
+        """Send a request and raise typed errors. Secrets are masked in every
+        error message (exception + diagnostic log) so a token/password echoed in
+        an AWX error body never reaches the MCP client or the log file."""
+        url = self._resolve_url(endpoint)
         headers = self.get_headers()
 
         logger.debug("%s %s", method, url)
@@ -218,11 +254,11 @@ class AnsibleClient:
             ) from e
         except requests.exceptions.RequestException as e:
             raise AnsibleHTTPError(
-                f"Ansible API request error: {method} {url} — {e}",
+                f"Ansible API request error: {method} {url} — {mask_secrets(str(e))}",
             ) from e
 
         if response.status_code >= 400:
-            error_message = (
+            error_message = mask_secrets(
                 f"Ansible API error: {response.status_code} - {response.text}"
             )
             logger.error(error_message)
@@ -233,6 +269,18 @@ class AnsibleClient:
             else:
                 raise AnsibleHTTPError(error_message, status_code=response.status_code)
 
+        return response
+
+    def request(
+        self,
+        method: str,
+        endpoint: str,
+        params: dict | None = None,
+        data: dict | None = None,
+    ) -> dict[str, Any]:
+        """Make a request to the Ansible API and return the parsed JSON body."""
+        response = self._send(method, endpoint, params, data)
+
         if response.status_code == 204:  # No content
             return {"status": "success"}
 
@@ -240,7 +288,10 @@ class AnsibleClient:
         if not response.text.strip():
             return {"status": "success", "message": "Empty response"}
 
-        # Try to parse as JSON, but handle non-JSON responses gracefully
+        # Try to parse as JSON, but handle non-JSON responses gracefully. For
+        # endpoints that legitimately return text (e.g. Prometheus /metrics/),
+        # use request_text() to get the full body instead of this truncated
+        # fallback.
         try:
             return response.json()
         except json.JSONDecodeError:
@@ -249,6 +300,16 @@ class AnsibleClient:
                 "content_type": response.headers.get("Content-Type", "unknown"),
                 "text": response.text[:1000],
             }
+
+    def request_text(
+        self,
+        method: str,
+        endpoint: str,
+        params: dict | None = None,
+    ) -> str:
+        """Return the full raw response body as text — no JSON parsing, no
+        truncation. Use for text endpoints such as ``/api/v2/metrics/``."""
+        return self._send(method, endpoint, params).text
 
 
 # Token cache for reuse across tool calls

@@ -55,6 +55,9 @@ ANSIBLE_CA_BUNDLE = os.environ.get("ANSIBLE_CA_BUNDLE") or None
 ENABLE_CREDENTIAL_MANAGEMENT = os.environ.get(
     "AWX_MCP_ENABLE_CREDENTIAL_MANAGEMENT", "false"
 ).lower() in ("true", "1", "yes")
+ENABLE_AD_HOC_COMMAND = os.environ.get(
+    "AWX_MCP_ENABLE_AD_HOC_COMMAND", "false"
+).lower() in ("true", "1", "yes")
 READ_ONLY = os.environ.get("AWX_MCP_READ_ONLY", "false").lower() in (
     "true",
     "1",
@@ -188,23 +191,23 @@ def resolve_tls_kwargs(transport: str) -> dict[str, str] | None:
         )
         return None
 
+    cert, key = TLS_CERT, TLS_KEY
     missing = [
         name
-        for name, value in (
-            ("AWX_MCP_TLS_CERT", TLS_CERT),
-            ("AWX_MCP_TLS_KEY", TLS_KEY),
-        )
+        for name, value in (("AWX_MCP_TLS_CERT", cert), ("AWX_MCP_TLS_KEY", key))
         if not value
     ]
     if missing:
         raise ValueError(
             "AWX_MCP_TLS_ENABLE=true requires " + " and ".join(missing) + " to be set."
         )
-    for name, path in (("AWX_MCP_TLS_CERT", TLS_CERT), ("AWX_MCP_TLS_KEY", TLS_KEY)):
+    # After the missing check both are set; narrow str | None -> str for mypy.
+    assert cert is not None and key is not None
+    for name, path in (("AWX_MCP_TLS_CERT", cert), ("AWX_MCP_TLS_KEY", key)):
         if not os.path.isfile(path):
             raise ValueError(f"{name} points to a file that does not exist: {path}")
 
-    kwargs: dict[str, str] = {"ssl_certfile": TLS_CERT, "ssl_keyfile": TLS_KEY}
+    kwargs: dict[str, str] = {"ssl_certfile": cert, "ssl_keyfile": key}
     if TLS_KEY_PASSWORD:
         kwargs["ssl_keyfile_password"] = TLS_KEY_PASSWORD
     return kwargs
@@ -267,6 +270,26 @@ def maybe_credential_management_tool(func):
     return func
 
 
+def maybe_ad_hoc_command_tool(func):
+    """Register ``run_ad_hoc_command`` only when AWX_MCP_ENABLE_AD_HOC_COMMAND=true.
+
+    Ad hoc commands run an arbitrary Ansible module (e.g. ``shell``/``command``)
+    on managed hosts — effectively remote code execution across the fleet. That
+    power is risky to expose to an LLM (prompt injection → fleet RCE), so it is
+    opt-in and unregistered by default. It is still a write, so it is also gated
+    by ``READ_ONLY``.
+    """
+    if ENABLE_AD_HOC_COMMAND and not READ_ONLY:
+        return mcp.tool(
+            annotations=ToolAnnotations(
+                readOnlyHint=False,
+                destructiveHint=True,
+                idempotentHint=False,
+            )
+        )(instrument_tool(func))
+    return func
+
+
 if ENABLE_CREDENTIAL_MANAGEMENT:
     logger.warning(
         "AWX_MCP_ENABLE_CREDENTIAL_MANAGEMENT=true detected. "
@@ -274,6 +297,14 @@ if ENABLE_CREDENTIAL_MANAGEMENT:
         "create_user, update_user) are now exposed and use Form-mode elicitation, "
         "which is not spec-compliant for sensitive data per the MCP specification. "
         "Use only in trusted, isolated environments. "
+        "See README.md#security for the threat model."
+    )
+
+if ENABLE_AD_HOC_COMMAND and not READ_ONLY:
+    logger.warning(
+        "AWX_MCP_ENABLE_AD_HOC_COMMAND=true detected. run_ad_hoc_command is now "
+        "exposed; it runs arbitrary Ansible modules on managed hosts (fleet-wide "
+        "remote execution). Use only in trusted, isolated environments. "
         "See README.md#security for the threat model."
     )
 

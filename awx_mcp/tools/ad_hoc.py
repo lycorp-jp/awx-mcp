@@ -7,10 +7,10 @@ Ansible MCP Server - Ad Hoc Command Tools
 import json
 
 from ..client import get_ansible_client
-from ..server import read_tool, write_tool
+from ..server import maybe_ad_hoc_command_tool, read_tool, write_tool
 
 
-@write_tool(destructive=True)
+@maybe_ad_hoc_command_tool
 def run_ad_hoc_command(
     inventory_id: int,
     credential_id: int,

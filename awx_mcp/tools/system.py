@@ -136,8 +136,9 @@ def get_metrics() -> str:
     For high-level counts and summaries, use get_dashboard_stats instead.
     """
     with get_ansible_client() as client:
-        metrics = client.request("GET", "/api/v2/metrics/")
-        return json.dumps(metrics, indent=2)
+        # /metrics/ returns Prometheus text, not JSON. Use request_text so the
+        # full body is returned instead of the truncated non-JSON fallback.
+        return client.request_text("GET", "/api/v2/metrics/")
 
 
 # =============================================================================

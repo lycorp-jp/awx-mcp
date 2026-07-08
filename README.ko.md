@@ -11,7 +11,7 @@ LLM이 AWX 인스턴스와 상호작용할 수 있도록 하는 MCP(Model Contex
 
 **146개의 도구**를 통해 인벤토리, 호스트, 프로젝트, 작업 템플릿, 워크플로우, 자격 증명, 실행 환경, RBAC, 시스템 관리 등 AWX의 모든 주요 기능을 지원합니다.
 
-> 기본값으로는 142개 도구가 등록됩니다. 나머지 4개(`create_credential`, `update_credential`, `create_user`, `update_user`)는 Form mode elicitation으로 민감 데이터를 수집하므로 `AWX_MCP_ENABLE_CREDENTIAL_MANAGEMENT=true`를 설정해야만 활성화됩니다. 자세한 내용은 [Credential Management (opt-in)](#credential-management-opt-in) 섹션을 참고하세요.
+> 기본값으로는 141개 도구가 등록됩니다. 나머지는 두 개의 opt-in 플래그로 활성화됩니다: `AWX_MCP_ENABLE_CREDENTIAL_MANAGEMENT=true`는 Form mode elicitation으로 민감 데이터를 수집하는 4개의 자격 증명/사용자 쓰기 도구(`create_credential`, `update_credential`, `create_user`, `update_user`)를 추가합니다 ([Credential Management (opt-in)](#credential-management-opt-in) 섹션 참고). `AWX_MCP_ENABLE_AD_HOC_COMMAND=true`는 여러 호스트에 걸쳐 명령을 실행하는 `run_ad_hoc_command`를 추가합니다 ([Ad Hoc Command Execution (opt-in)](#ad-hoc-command-execution-opt-in) 섹션 참고).
 
 ---
 
@@ -25,6 +25,7 @@ LLM이 AWX 인스턴스와 상호작용할 수 있도록 하는 MCP(Model Contex
 - [설치](#설치)
 - [설정](#설정)
 - [Credential Management (opt-in)](#credential-management-opt-in)
+- [Ad Hoc Command Execution (opt-in)](#ad-hoc-command-execution-opt-in)
 - [MCP 클라이언트 연동](#mcp-클라이언트-연동)
 - [사용 예시](#사용-예시)
 - [도구 목록](#도구-목록)
@@ -93,7 +94,7 @@ flowchart LR
     User([사용자])
     LLM[LLM<br/>Claude / GPT 등]
     MCP[MCP Client<br/>Claude Desktop<br/>Claude Code<br/>Cline 등]
-    AWX_MCP["AWX MCP Server<br/>(awx-mcp)<br/>146개 도구 (기본 142 + opt-in 4)"]
+    AWX_MCP["AWX MCP Server<br/>(awx-mcp)<br/>146개 도구 (기본 141 + opt-in 5)"]
     AWX[AWX<br/>REST API v2]
 
     User -- 자연어 요청 --> LLM
@@ -132,7 +133,7 @@ flowchart LR
 - **모듈별 디렉토리 구조**: 20개 도메인 모듈로 분리하여 코드 가독성 및 유지보수성 향상
 - **토큰 캐시**: username/password 인증 시 토큰을 재사용하여 불필요한 토큰 생성 방지
 - **페이지네이션 제어**: `limit` 파라미터로 응답당 레코드 수를 제한해 큰 결과셋이 LLM 컨텍스트를 넘치지 않게 한다
-- **기본값 안전 (Safe by default)**: 민감 데이터를 다루는 4개의 자격 증명/사용자 쓰기 도구는 `AWX_MCP_ENABLE_CREDENTIAL_MANAGEMENT=true` 설정이 없으면 등록되지 않습니다. 기본 배포는 민감 데이터를 다루는 도구를 노출하지 않습니다 — [Credential Management (opt-in)](#credential-management-opt-in) 섹션 참조
+- **기본값 안전 (Safe by default)**: 민감 데이터를 다루는 4개의 자격 증명/사용자 쓰기 도구와 `run_ad_hoc_command`(여러 호스트에 걸친 원격 실행)는 각각의 opt-in 플래그(`AWX_MCP_ENABLE_CREDENTIAL_MANAGEMENT=true`, `AWX_MCP_ENABLE_AD_HOC_COMMAND=true`)를 설정하지 않으면 등록되지 않습니다. 기본 배포는 민감 데이터를 다루거나 여러 호스트에 명령을 실행하는 도구를 노출하지 않습니다 — [Credential Management (opt-in)](#credential-management-opt-in) 및 [Ad Hoc Command Execution (opt-in)](#ad-hoc-command-execution-opt-in) 섹션 참조
 - **도구 파라미터 노출 감소 (opt-in 활성화 시)**: 자격 증명 입력 및 비밀번호를 [MCP Elicitation](https://modelcontextprotocol.io/specification/2025-11-25/client/elicitation) (Form mode)으로 수집하여 도구 파라미터로 전달되지 않도록 합니다
 - **읽기 전용 모드**: `AWX_MCP_READ_ONLY=true`를 설정하면 시작 시 읽기 도구(`list_*`/`get_*`)만 노출됩니다
 
@@ -217,6 +218,7 @@ AWX UI에서 미리 생성한 토큰을 사용합니다. 토큰이 만료되지 
 | `ANSIBLE_CA_BUNDLE` | 미설정 | 검증이 활성화된 상태에서 신뢰할 커스텀 CA 번들/자체 서명 인증서(PEM) 경로. 검증을 끄지 않고도 사설 CA를 사용하는 AWX 인스턴스에 연결할 수 있습니다. 경로가 존재하지 않으면 서버가 시작 시 즉시 실패합니다. |
 | `ANSIBLE_LOG_LEVEL` | `INFO` | 로그 레벨 (`DEBUG`, `INFO`, `WARNING`, `ERROR`) |
 | `AWX_MCP_ENABLE_CREDENTIAL_MANAGEMENT` | `false` | Form mode elicitation으로 민감 데이터를 수집하는 자격 증명/사용자 쓰기 도구 4개의 활성화 여부. [Credential Management (opt-in)](#credential-management-opt-in) 섹션 참조. |
+| `AWX_MCP_ENABLE_AD_HOC_COMMAND` | `false` | `run_ad_hoc_command`(인벤토리 내 일부 또는 전체 호스트에 ad hoc Ansible 명령을 실행)의 활성화 여부. 기본적으로 비활성화되어 있으며, 활성화 시 시작 경고가 로깅됩니다. [Ad Hoc Command Execution (opt-in)](#ad-hoc-command-execution-opt-in) 섹션 참조. |
 | `AWX_MCP_READ_ONLY` | `false` | `true`로 설정하면 시작 시 모든 쓰기/파괴적 도구가 등록 해제되고 읽기 전용 도구(`list_*`/`get_*`)만 노출됩니다. 안전한 조회 또는 감사 전용 자동화에 유용합니다. |
 | `AWX_MCP_TRANSPORT` | `stdio` | MCP 트랜스포트 종류: `stdio`, `sse`, `streamable-http`. |
 | `AWX_MCP_HOST` | `127.0.0.1` | `sse` 및 `streamable-http` 트랜스포트의 바인드 호스트. |
@@ -263,7 +265,7 @@ uv run awx-mcp --transport streamable-http --host 0.0.0.0 --port 8443
 
 ## Credential Management (opt-in)
 
-4개의 도구 — `create_credential`, `update_credential`, `create_user`, `update_user` — 는 **Form mode elicitation**을 통해 민감 데이터(비밀번호, 자격 증명 입력)를 수집합니다. 이 도구들은 기본적으로 **등록되지 않으므로**, 기본 142개 도구는 민감 데이터를 다루는 도구를 전혀 노출하지 않습니다.
+4개의 도구 — `create_credential`, `update_credential`, `create_user`, `update_user` — 는 **Form mode elicitation**을 통해 민감 데이터(비밀번호, 자격 증명 입력)를 수집합니다. 이 도구들은 기본적으로 **등록되지 않으므로**, 기본 141개 도구는 민감 데이터를 다루는 도구를 전혀 노출하지 않습니다.
 
 활성화하려면 다음을 설정하세요:
 
@@ -272,6 +274,20 @@ AWX_MCP_ENABLE_CREDENTIAL_MANAGEMENT=true
 ```
 
 Form mode elicitation은 MCP 스펙 관점에서 민감 데이터에 대해 비준수 상태입니다 — 응답이 클라이언트 측 로깅이나 기타 중간 시스템을 통해 노출될 수 있습니다. 신뢰할 수 있는 격리된 환경에서만 활성화하세요. 전체 위협 모델 및 공개 정책은 [SECURITY.md](./SECURITY.md)를 참고하세요.
+
+---
+
+## Ad Hoc Command Execution (opt-in)
+
+`run_ad_hoc_command`는 인벤토리 내 일부 또는 전체 호스트를 대상으로 ad hoc Ansible 명령을 실행합니다 — 사실상 여러 호스트에 걸친 원격 명령 실행입니다. 기본적으로 **등록되지 않습니다**.
+
+활성화하려면 다음을 설정하세요:
+
+```bash
+AWX_MCP_ENABLE_AD_HOC_COMMAND=true
+```
+
+이 플래그가 활성화되면 서버가 시작 시 경고를 로깅합니다. 운영자가 ad hoc 실행이 명시적으로 필요하고 그 영향 범위를 감수할 수 있을 때만 활성화하세요. 전체 위협 모델은 [SECURITY.md](./SECURITY.md)를 참고하세요.
 
 ---
 
@@ -428,7 +444,7 @@ MCP 클라이언트(Claude 등)에 자연어로 요청하면 서버가 적절한
 
 ## 도구 목록
 
-총 **146개** 도구를 20개 모듈로 제공합니다. 기본값으로 142개가 등록되며, 아래에서 **opt-in**으로 표시된 4개는 `AWX_MCP_ENABLE_CREDENTIAL_MANAGEMENT=true` 설정 시에만 노출됩니다([Credential Management (opt-in)](#credential-management-opt-in) 섹션 참조).
+총 **146개** 도구를 20개 모듈로 제공합니다. 기본값으로 141개가 등록되며, 아래에서 **opt-in**으로 표시된 5개는 각자의 플래그가 설정될 때만 노출됩니다 — 4개는 `AWX_MCP_ENABLE_CREDENTIAL_MANAGEMENT=true`([Credential Management (opt-in)](#credential-management-opt-in) 섹션 참조), 1개는 `AWX_MCP_ENABLE_AD_HOC_COMMAND=true`([Ad Hoc Command Execution (opt-in)](#ad-hoc-command-execution-opt-in) 섹션 참조).
 
 <details>
 <summary><strong>전체 146개 도구 보기</strong></summary>
@@ -562,11 +578,11 @@ MCP 클라이언트(Claude 등)에 자연어로 요청하면 서버가 적절한
 | `update_user` | **opt-in.** 사용자 수정 (elicitation으로 비밀번호 수집 가능) |
 | `delete_user` | 사용자 삭제 |
 
-### Ad Hoc 명령 (3개) - `ad_hoc.py`
+### Ad Hoc 명령 (3개: 기본 2 + opt-in 1) - `ad_hoc.py`
 
 | 도구 | 설명 |
 |------|------|
-| `run_ad_hoc_command` | Ad hoc Ansible 명령 실행 |
+| `run_ad_hoc_command` | **opt-in.** 인벤토리 전체에 ad hoc Ansible 명령 실행 (여러 호스트에 걸친 실행) |
 | `get_ad_hoc_command` | Ad hoc 명령 상세 조회 |
 | `cancel_ad_hoc_command` | 실행 중인 Ad hoc 명령 취소 |
 

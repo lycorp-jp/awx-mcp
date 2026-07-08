@@ -21,9 +21,12 @@ own RBAC on every API call using the configured token.
 
 All 4 credential/user write tools (`create_credential`, `update_credential`,
 `create_user`, `update_user`) are gated behind
-`AWX_MCP_ENABLE_CREDENTIAL_MANAGEMENT=true` (default: off). The default
-deployment registers 142 of 146 tools and exposes no tool that handles
-sensitive data.
+`AWX_MCP_ENABLE_CREDENTIAL_MANAGEMENT=true` (default: off). `run_ad_hoc_command`
+— which executes an ad hoc Ansible command against some or all hosts in an
+inventory, i.e. fleet-wide remote code execution — is gated behind
+`AWX_MCP_ENABLE_AD_HOC_COMMAND=true` (default: off). The default deployment
+registers 141 of 146 tools and exposes no tool that handles sensitive data or
+executes commands across a fleet of hosts.
 
 ## Sensitive Data
 
@@ -42,12 +45,39 @@ This is the residual risk operators accept when enabling the flag. Use only
 in trusted, isolated environments and document the acceptance in your
 runbooks.
 
+## Fleet-Wide Command Execution
+
+`run_ad_hoc_command` runs an ad hoc Ansible command against some or all hosts
+in an AWX inventory. Because inventories can span an operator's entire managed
+fleet, this tool is effectively remote code execution across every reachable
+host — the same blast radius as any ad hoc AWX job.
+
+It is gated behind `AWX_MCP_ENABLE_AD_HOC_COMMAND=true` (default: off) and the
+server logs a startup warning when it is enabled. AWX's own RBAC still applies
+to the configured token, but operators should only enable this flag when ad
+hoc execution is an explicit, accepted operational need.
+
 ## Security Hardening History
 
 Notable security-relevant changes, newest first. See the
 [CHANGELOG](CHANGELOG.md) and
 [release notes](https://github.com/lycorp-jp/awx-mcp/releases) for full detail.
 
+- Gated `run_ad_hoc_command` (fleet-wide remote execution) behind an opt-in
+  env flag (`AWX_MCP_ENABLE_AD_HOC_COMMAND=true`); not registered by default,
+  with a startup warning when enabled.
+- In read-only mode (`AWX_MCP_READ_ONLY=true`), the AWX token minted via
+  username/password auth now requests `scope: "read"` instead of `"write"`.
+- AWX error response bodies are now secret-masked (bearer tokens, `token=`,
+  `password=`) before being surfaced in exceptions or the diagnostic log, not
+  just the usage log.
+- Added optional in-process inbound TLS for the `sse`/`streamable-http`
+  transports (`AWX_MCP_TLS_ENABLE`, `AWX_MCP_TLS_CERT`, `AWX_MCP_TLS_KEY`,
+  `AWX_MCP_TLS_KEY_PASSWORD`).
+- TLS certificate verification (`ANSIBLE_SSL_VERIFY`) is now on by default;
+  added `ANSIBLE_CA_BUNDLE` to trust a private/self-signed CA without
+  disabling verification. A bare `ANSIBLE_BASE_URL` host is upgraded to
+  `https://`; an explicit `http://` URL logs a warning.
 - Corrected Form-mode elicitation security claims — clarified that Form mode is
   not spec-compliant for sensitive data.
 - Gated the 4 credential/user write tools behind an opt-in env flag

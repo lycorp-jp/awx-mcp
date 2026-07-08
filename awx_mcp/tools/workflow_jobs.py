@@ -225,14 +225,26 @@ def list_workflow_approval_templates(
         offset: Number of results to skip
     """
     with get_ansible_client() as client:
-        params: dict[str, Any] = {"limit": limit, "offset": offset}
         if workflow_template_id is not None:
             endpoint = (
                 f"/api/v2/workflow_job_templates/{workflow_template_id}/workflow_nodes/"
             )
         else:
             endpoint = "/api/v2/workflow_job_template_nodes/"
-        all_nodes = handle_pagination(client, endpoint, params)
+        # Fetch ALL nodes, then filter for approval nodes, THEN apply
+        # limit/offset. Applying limit before filtering (the previous behavior)
+        # would only scan the first `limit` raw nodes and miss approval nodes
+        # beyond that window, returning an incomplete (often empty) list on
+        # large AWX instances.
+        all_nodes = handle_pagination(client, endpoint)
+        # Surface a pagination-budget timeout instead of silently returning a
+        # partial (and therefore wrong) approval list.
+        if (
+            len(all_nodes) == 1
+            and isinstance(all_nodes[0], dict)
+            and all_nodes[0].get("error") == "pagination_timeout"
+        ):
+            return json.dumps(all_nodes[0], indent=2)
         # AWX versions differ on which field identifies approval nodes in summary_fields
         approval_nodes = []
         for node in all_nodes:
@@ -242,7 +254,12 @@ def list_workflow_approval_templates(
                 or ujt.get("type") == "workflow_approval_template"
             ):
                 approval_nodes.append(node)
-        return json.dumps(approval_nodes, indent=2)
+        window = (
+            approval_nodes[offset : offset + limit]
+            if limit
+            else approval_nodes[offset:]
+        )
+        return json.dumps(window, indent=2)
 
 
 @read_tool
