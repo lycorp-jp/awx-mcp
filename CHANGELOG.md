@@ -10,9 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org).
 ### Security
 - The four credential/user write tools (`create_credential`, `update_credential`,
   `create_user`, `update_user`) are now opt-in via
-  `AWX_MCP_ENABLE_CREDENTIAL_MANAGEMENT=true` (default: `false`). Combined
-  with the `run_ad_hoc_command` gating below, the default deployment
-  registers 140 of 145 tools and exposes no tool that handles sensitive data.
+  `AWX_MCP_ENABLE_CREDENTIAL_MANAGEMENT=true` (default: `false`). The default
+  deployment registers 141 of 145 tools and exposes no tool that handles
+  sensitive data.
 - When the flag is enabled, the server logs a stderr warning noting that the
   gated tools use Form-mode elicitation, which is not spec-compliant for
   sensitive data per the MCP specification. See [SECURITY.md](SECURITY.md).
@@ -25,10 +25,6 @@ and this project adheres to [Semantic Versioning](https://semver.org).
   host with no scheme is upgraded to `https://`; an explicit `http://` URL is
   honored but logs a warning since the API token would be sent unencrypted.
   (#14)
-- `run_ad_hoc_command` (fleet-wide ad hoc Ansible execution) is now opt-in via
-  `AWX_MCP_ENABLE_AD_HOC_COMMAND=true` (default: `false`); it is unregistered
-  by default and the server logs a startup warning when the flag is enabled.
-  The default deployment now registers 140 of 145 tools.
 - In read-only mode (`AWX_MCP_READ_ONLY=true`), the AWX token minted via
   username/password auth now requests `scope: "read"` instead of `"write"`.
 - AWX error response bodies are now secret-masked (bearer tokens, `token=`,

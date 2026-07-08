@@ -21,12 +21,9 @@ own RBAC on every API call using the configured token.
 
 All 4 credential/user write tools (`create_credential`, `update_credential`,
 `create_user`, `update_user`) are gated behind
-`AWX_MCP_ENABLE_CREDENTIAL_MANAGEMENT=true` (default: off). `run_ad_hoc_command`
-— which executes an ad hoc Ansible command against some or all hosts in an
-inventory, i.e. fleet-wide remote code execution — is gated behind
-`AWX_MCP_ENABLE_AD_HOC_COMMAND=true` (default: off). The default deployment
-registers 140 of 145 tools and exposes no tool that handles sensitive data or
-executes commands across a fleet of hosts.
+`AWX_MCP_ENABLE_CREDENTIAL_MANAGEMENT=true` (default: off). The default
+deployment registers 141 of 145 tools and exposes no tool that handles
+sensitive data.
 
 ## Sensitive Data
 
@@ -48,14 +45,13 @@ runbooks.
 ## Fleet-Wide Command Execution
 
 `run_ad_hoc_command` runs an ad hoc Ansible command against some or all hosts
-in an AWX inventory. Because inventories can span an operator's entire managed
-fleet, this tool is effectively remote code execution across every reachable
-host — the same blast radius as any ad hoc AWX job.
-
-It is gated behind `AWX_MCP_ENABLE_AD_HOC_COMMAND=true` (default: off) and the
-server logs a startup warning when it is enabled. AWX's own RBAC still applies
-to the configured token, but operators should only enable this flag when ad
-hoc execution is an explicit, accepted operational need.
+in an AWX inventory — a normal, default-registered write tool, not an opt-in
+one. Because inventories can span an operator's entire managed fleet, this
+tool is effectively remote code execution across every reachable host — the
+same blast radius as any ad hoc AWX job. It is subject to `AWX_MCP_READ_ONLY`
+like other write/destructive tools: set `AWX_MCP_READ_ONLY=true` to unregister
+it along with all other write tools. AWX's own RBAC still applies to the
+configured token.
 
 ## Security Hardening History
 
@@ -63,9 +59,6 @@ Notable security-relevant changes, newest first. See the
 [CHANGELOG](CHANGELOG.md) and
 [release notes](https://github.com/lycorp-jp/awx-mcp/releases) for full detail.
 
-- Gated `run_ad_hoc_command` (fleet-wide remote execution) behind an opt-in
-  env flag (`AWX_MCP_ENABLE_AD_HOC_COMMAND=true`); not registered by default,
-  with a startup warning when enabled.
 - In read-only mode (`AWX_MCP_READ_ONLY=true`), the AWX token minted via
   username/password auth now requests `scope: "read"` instead of `"write"`.
 - AWX error response bodies are now secret-masked (bearer tokens, `token=`,

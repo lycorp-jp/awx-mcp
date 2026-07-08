@@ -11,7 +11,7 @@ An MCP (Model Context Protocol) server that lets LLMs interact with AWX instance
 
 **145 tools** covering every major AWX capability: inventories, hosts, projects, job templates, workflows, credentials, execution environments, RBAC, and system administration.
 
-> 140 tools are enabled by default. Two opt-in flags unlock the rest: `AWX_MCP_ENABLE_CREDENTIAL_MANAGEMENT=true` adds 4 credential/user write tools (`create_credential`, `update_credential`, `create_user`, `update_user`) that collect sensitive data via Form-mode elicitation (see [Credential Management](#credential-management-opt-in)); `AWX_MCP_ENABLE_AD_HOC_COMMAND=true` adds `run_ad_hoc_command`, which executes commands across a fleet of hosts (see [Ad Hoc Command Execution](#ad-hoc-command-execution-opt-in)).
+> 141 tools are enabled by default. The remaining 4 (`create_credential`, `update_credential`, `create_user`, `update_user`) collect sensitive data via Form-mode elicitation and are gated behind `AWX_MCP_ENABLE_CREDENTIAL_MANAGEMENT=true`. See [Credential Management](#credential-management-opt-in).
 
 ---
 
@@ -25,7 +25,6 @@ An MCP (Model Context Protocol) server that lets LLMs interact with AWX instance
 - [Installation](#installation)
 - [Configuration](#configuration)
 - [Credential Management (opt-in)](#credential-management-opt-in)
-- [Ad Hoc Command Execution (opt-in)](#ad-hoc-command-execution-opt-in)
 - [MCP Client Integration](#mcp-client-integration)
 - [Usage Examples](#usage-examples)
 - [Tools](#tools)
@@ -94,7 +93,7 @@ flowchart LR
     User([User])
     LLM[LLM<br/>Claude / GPT / etc.]
     MCP[MCP Client<br/>Claude Desktop<br/>Claude Code<br/>Cline / etc.]
-    AWX_MCP["AWX MCP Server<br/>(awx-mcp)<br/>145 tools (140 default + 5 opt-in)"]
+    AWX_MCP["AWX MCP Server<br/>(awx-mcp)<br/>145 tools (141 default + 4 opt-in)"]
     AWX[AWX<br/>REST API v2]
 
     User -- natural language request --> LLM
@@ -133,7 +132,7 @@ Full management across inventories, hosts, groups, job templates, jobs, projects
 - **Modular directory structure**: 20 domain modules for clean separation of concerns and easier maintenance
 - **Token caching**: reuses OAuth2 tokens when authenticating with username/password to avoid unnecessary token creation
 - **Pagination control**: caps each response at the requested number of records via the `limit` parameter, so large result sets never flood the LLM context
-- **Safe by default**: 4 credential/user write tools that collect sensitive data, and `run_ad_hoc_command` (fleet-wide remote execution), are not registered unless their opt-in flags are set (`AWX_MCP_ENABLE_CREDENTIAL_MANAGEMENT=true`, `AWX_MCP_ENABLE_AD_HOC_COMMAND=true`). The default deployment exposes no tool that handles sensitive data or executes commands fleet-wide — see [Credential Management](#credential-management-opt-in) and [Ad Hoc Command Execution](#ad-hoc-command-execution-opt-in)
+- **Safe by default**: 4 credential/user write tools that collect sensitive data are not registered unless `AWX_MCP_ENABLE_CREDENTIAL_MANAGEMENT=true` is set. The default deployment exposes no tool that handles sensitive data — see [Credential Management](#credential-management-opt-in)
 - **Reduced parameter exposure (when opt-in is enabled)**: credential inputs and passwords are collected via [MCP Elicitation](https://modelcontextprotocol.io/specification/2025-11-25/client/elicitation) (Form mode) instead of being passed as tool parameters
 - **Read-only mode**: set `AWX_MCP_READ_ONLY=true` to expose only read tools (`list_*`/`get_*`) at startup
 
@@ -218,7 +217,6 @@ The server automatically creates and caches an OAuth2 token on your behalf.
 | `ANSIBLE_CA_BUNDLE` | unset | Path to a custom CA bundle / self-signed certificate (PEM) to trust when verification is enabled. Lets you connect to an AWX instance with a private CA without disabling verification. The server fails fast at startup if the path doesn't exist. |
 | `ANSIBLE_LOG_LEVEL` | `INFO` | Log level (`DEBUG`, `INFO`, `WARNING`, `ERROR`) |
 | `AWX_MCP_ENABLE_CREDENTIAL_MANAGEMENT` | `false` | Opt-in for the 4 credential/user write tools that collect sensitive data via Form-mode elicitation. See [Credential Management](#credential-management-opt-in). |
-| `AWX_MCP_ENABLE_AD_HOC_COMMAND` | `false` | Opt-in for `run_ad_hoc_command`, which executes an ad hoc Ansible command across some or all hosts in an inventory. Gated off by default; a startup warning is logged when enabled. See [Ad Hoc Command Execution](#ad-hoc-command-execution-opt-in). |
 | `AWX_MCP_READ_ONLY` | `false` | When `true`, all write/destructive tools are unregistered at startup; only read-only tools (`list_*`/`get_*`) are exposed. Useful for safe inspection or audit-only automation. |
 | `AWX_MCP_TRANSPORT` | `stdio` | MCP transport to use: `stdio`, `sse`, or `streamable-http`. |
 | `AWX_MCP_HOST` | `127.0.0.1` | Bind host for `sse` and `streamable-http` transports. |
@@ -265,7 +263,7 @@ Each entry also carries a `kind` field: `"tool"` for regular MCP tool calls, and
 
 ## Credential Management (opt-in)
 
-Four tools — `create_credential`, `update_credential`, `create_user`, `update_user` — collect sensitive data (passwords, credential inputs) via **Form-mode elicitation**. They are **not registered** by default, so the default 140-tool surface exposes nothing that handles sensitive data.
+Four tools — `create_credential`, `update_credential`, `create_user`, `update_user` — collect sensitive data (passwords, credential inputs) via **Form-mode elicitation**. They are **not registered** by default, so the default 141-tool surface exposes nothing that handles sensitive data.
 
 To enable them, set:
 
@@ -274,20 +272,6 @@ AWX_MCP_ENABLE_CREDENTIAL_MANAGEMENT=true
 ```
 
 Form-mode elicitation is not spec-compliant for sensitive data per the MCP specification — the response may still be exposed through client-side logging or other intermediate systems. Enable only in trusted, isolated environments. For the full threat model and disclosure policy, see [SECURITY.md](./SECURITY.md).
-
----
-
-## Ad Hoc Command Execution (opt-in)
-
-`run_ad_hoc_command` runs an ad hoc Ansible command against some or all hosts in an inventory — effectively fleet-wide remote command execution. It is **not registered** by default.
-
-To enable it, set:
-
-```bash
-AWX_MCP_ENABLE_AD_HOC_COMMAND=true
-```
-
-The server logs a startup warning when this flag is enabled. Only enable it when the operator explicitly needs ad hoc execution and accepts the blast radius. For the full threat model, see [SECURITY.md](./SECURITY.md).
 
 ---
 
@@ -444,7 +428,7 @@ Send natural language requests to your MCP client (Claude, etc.) and the server 
 
 ## Tools
 
-**145 tools** across 20 modules. By default 140 are registered; the 5 marked **opt-in** below appear only when their respective flags are set — 4 via `AWX_MCP_ENABLE_CREDENTIAL_MANAGEMENT=true` (see [Credential Management](#credential-management-opt-in)) and 1 via `AWX_MCP_ENABLE_AD_HOC_COMMAND=true` (see [Ad Hoc Command Execution](#ad-hoc-command-execution-opt-in)).
+**145 tools** across 20 modules. By default 141 are registered; the 4 marked **opt-in** below appear only when `AWX_MCP_ENABLE_CREDENTIAL_MANAGEMENT=true` (see [Credential Management](#credential-management-opt-in)).
 
 <details>
 <summary><strong>Show all 145 tools</strong></summary>
@@ -578,11 +562,11 @@ Send natural language requests to your MCP client (Claude, etc.) and the server 
 | `update_user` | **opt-in.** Update a user (may collect password via elicitation) |
 | `delete_user` | Delete a user |
 
-### Ad Hoc Commands (3: 2 default + 1 opt-in) - `ad_hoc.py`
+### Ad Hoc Commands (3) - `ad_hoc.py`
 
 | Tool | Description |
 |------|-------------|
-| `run_ad_hoc_command` | **opt-in.** Run an ad hoc Ansible command across an inventory (fleet-wide execution) |
+| `run_ad_hoc_command` | Run an ad hoc Ansible command |
 | `get_ad_hoc_command` | Get details of an ad hoc command |
 | `cancel_ad_hoc_command` | Cancel a running ad hoc command |
 

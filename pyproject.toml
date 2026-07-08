@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "awx-mcp"
 version = "24.6.1"
-description = "MCP server for AWX/Ansible Tower — 145 tools (140 default + 5 opt-in) for REST API v2"
+description = "MCP server for AWX/Ansible Tower — 145 tools (141 default + 4 opt-in) for REST API v2"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "Apache-2.0"
