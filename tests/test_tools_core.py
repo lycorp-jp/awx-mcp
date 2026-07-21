@@ -1121,3 +1121,61 @@ def test_get_project_update_stdout_txt_format_uses_raw_session_get(fake_client):
     fake_client.session.get.assert_called_once()
     assert json.loads(out) == {"status": "success", "stdout": "PLAY [all] ***"}
     fake_client.request.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# execution-history ordering (regression: "recent N" returned oldest-first)
+# ---------------------------------------------------------------------------
+
+
+def test_list_jobs_defaults_to_newest_first(fake_client):
+    from awx_mcp.tools import jobs as jobs_mod
+
+    fake_client.request.return_value = _paginated([{"id": 1}])
+    with patch.object(
+        jobs_mod, "get_ansible_client", new=fake_client_factory(fake_client)
+    ):
+        jobs_mod.list_jobs(limit=10)
+    params = (
+        fake_client.request.call_args.kwargs.get("params")
+        or fake_client.request.call_args.args[-1]
+    )
+    assert params["order_by"] == "-created"
+
+
+def test_list_jobs_order_by_override(fake_client):
+    from awx_mcp.tools import jobs as jobs_mod
+
+    fake_client.request.return_value = _paginated([{"id": 1}])
+    with patch.object(
+        jobs_mod, "get_ansible_client", new=fake_client_factory(fake_client)
+    ):
+        jobs_mod.list_jobs(order_by="id")
+    params = (
+        fake_client.request.call_args.kwargs.get("params")
+        or fake_client.request.call_args.args[-1]
+    )
+    assert params["order_by"] == "id"
+
+
+def test_history_list_tools_default_newest_first(fake_client):
+    from awx_mcp.tools import system as system_mod
+    from awx_mcp.tools import workflow_jobs as wfj_mod
+
+    cases = [
+        (wfj_mod, lambda: wfj_mod.list_workflow_jobs()),
+        (system_mod, lambda: system_mod.list_system_jobs()),
+        (inventories_mod, lambda: inventories_mod.list_inventory_updates(1)),
+        (projects_mod, lambda: projects_mod.list_project_updates(1)),
+    ]
+    for mod, call in cases:
+        fake_client.request.return_value = _paginated([{"id": 1}])
+        with patch.object(
+            mod, "get_ansible_client", new=fake_client_factory(fake_client)
+        ):
+            call()
+        params = (
+            fake_client.request.call_args.kwargs.get("params")
+            or fake_client.request.call_args.args[-1]
+        )
+        assert params["order_by"] == "-created", mod.__name__

@@ -199,8 +199,13 @@ def launch_system_job(template_id: int, extra_vars: str = None) -> str:
 
 
 @read_tool
-def list_system_jobs(limit: int = 100, offset: int = 0) -> str:
+def list_system_jobs(
+    limit: int = 100, offset: int = 0, order_by: str = "-created"
+) -> str:
     """List AWX system job executions.
+
+    Newest first by default (order_by="-created"); AWX's own default is
+    oldest-first.
 
     Use this for maintenance-task run history such as cleanup and analytics jobs.
     For regular playbook execution runs, use list_jobs.
@@ -209,9 +214,15 @@ def list_system_jobs(limit: int = 100, offset: int = 0) -> str:
     Args:
         limit: Maximum number of results to return
         offset: Number of results to skip
+        order_by: Sort field; prefix with "-" for descending
+            (e.g. -created, created, -finished, id, status)
     """
     with get_ansible_client() as client:
-        params: dict[str, Any] = {"limit": limit, "offset": offset}
+        params: dict[str, Any] = {
+            "limit": limit,
+            "offset": offset,
+            "order_by": order_by,
+        }
         jobs = handle_pagination(client, "/api/v2/system_jobs/", params)
         return json.dumps(jobs, indent=2)
 

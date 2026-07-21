@@ -18,8 +18,17 @@ from ..server import read_tool, write_tool
 
 
 @read_tool
-def list_jobs(status: str = None, limit: int = 100, offset: int = 0) -> str:
+def list_jobs(
+    status: str = None,
+    limit: int = 100,
+    offset: int = 0,
+    order_by: str = "-created",
+) -> str:
     """List AWX regular playbook jobs, optionally filtered by status.
+
+    Newest first by default (order_by="-created") — without an explicit
+    ordering AWX returns jobs oldest-first, which is rarely what "recent
+    jobs" means.
 
     Use this for single playbook executions launched from job templates.
     For multi-step orchestration runs, use list_workflow_jobs instead.
@@ -30,9 +39,15 @@ def list_jobs(status: str = None, limit: int = 100, offset: int = 0) -> str:
             (pending, waiting, running, successful, failed, canceled)
         limit: Maximum number of results to return
         offset: Number of results to skip
+        order_by: Sort field; prefix with "-" for descending
+            (e.g. -created, created, -finished, id, status)
     """
     with get_ansible_client() as client:
-        params: dict[str, Any] = {"limit": limit, "offset": offset}
+        params: dict[str, Any] = {
+            "limit": limit,
+            "offset": offset,
+            "order_by": order_by,
+        }
         if status is not None:
             params["status"] = status
 

@@ -222,8 +222,13 @@ def list_project_playbooks(project_id: int) -> str:
 
 
 @read_tool
-def list_project_updates(project_id: int, limit: int = 100, offset: int = 0) -> str:
+def list_project_updates(
+    project_id: int, limit: int = 100, offset: int = 0, order_by: str = "-created"
+) -> str:
     """List AWX project SCM sync history.
+
+    Newest first by default (order_by="-created"); AWX's own default is
+    oldest-first.
 
     Returns update records for repository fetch/update runs on a project. For
     inventory source host-discovery sync history, use list_inventory_updates
@@ -233,9 +238,11 @@ def list_project_updates(project_id: int, limit: int = 100, offset: int = 0) -> 
         project_id: ID of the project (from list_projects response)
         limit: Maximum number of results to return
         offset: Number of results to skip
+        order_by: Sort field; prefix with "-" for descending
+            (e.g. -created, created, -finished, id, status)
     """
     with get_ansible_client() as client:
-        params = {"limit": limit, "offset": offset}
+        params = {"limit": limit, "offset": offset, "order_by": order_by}
         updates = handle_pagination(
             client, f"/api/v2/projects/{project_id}/project_updates/", params
         )
