@@ -72,6 +72,10 @@ and this project adheres to [Semantic Versioning](https://semver.org).
 - User-identity resolution for usage logging no longer holds its lock during
   the `/api/v2/me/` HTTP call, so concurrent first-time lookups are not
   serialized (a benign duplicate lookup may occur; last write wins).
+- README (en/ko/ja): installation and MCP client examples now use
+  `uvx --from git+https://github.com/lycorp-jp/awx-mcp awx-mcp` instead of a
+  manual clone + `uv run --directory` (local checkout remains documented for
+  development).
 
 ### Fixed
 - `_atexit_revoke_targets` no longer accumulates superseded token entries on
