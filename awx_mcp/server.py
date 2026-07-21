@@ -52,9 +52,20 @@ try:
 except ValueError as exc:
     raise ValueError("AWX_MCP_PORT must be an integer.") from exc
 
+# Stateless streamable-http: each request is self-contained, so no per-session
+# state is held in this process. Required to run multiple --serve replicas behind
+# a plain round-robin load balancer — otherwise a session created on one replica
+# 404s when a later request is routed to another. Default off (preserves the
+# stateful session behavior for single-instance / sse setups).
+STATELESS_HTTP = os.environ.get("AWX_MCP_STATELESS_HTTP", "false").lower() in (
+    "true",
+    "1",
+    "yes",
+)
+
 # Initialize FastMCP server (host/port apply to the sse and streamable-http
 # transports; ignored for stdio)
-mcp = FastMCP("ansible", host=MCP_HOST, port=MCP_PORT)
+mcp = FastMCP("ansible", host=MCP_HOST, port=MCP_PORT, stateless_http=STATELESS_HTTP)
 
 # Configuration
 ANSIBLE_BASE_URL = os.environ.get("ANSIBLE_BASE_URL")

@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org).
 ## [Unreleased]
 
 ### Added
+- Optional stateless streamable-http mode via `AWX_MCP_STATELESS_HTTP` (default
+  off). When enabled, `--serve` keeps no per-session state in-process, so
+  multiple replicas can run behind a plain round-robin load balancer without
+  sessions 404-ing when a request is routed to a different replica.
 - Multi-user central deployment. `awx-mcp --serve` runs one shared server that
   authenticates **each request with the caller's own AWX token** (passthrough),
   sent as `Authorization: Bearer <token>` (or the `X-AWX-Token` fallback header),
