@@ -107,6 +107,7 @@ async def _run_proxy_async(url: str, token: str, ssl_verify: bool | str) -> None
                             captured,
                             user=usage_user,
                             awx_host=central_host,
+                            params=arguments,
                         )
 
                 init_opts = proxy.create_initialization_options()

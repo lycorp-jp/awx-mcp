@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org).
 ## [Unreleased]
 
 ### Added
+- Tool-call arguments are recorded in the usage log as a `params` field so you
+  can see how each tool was invoked. Secret-named keys (password, token, key,
+  `inputs`, …) and inline `token=`/`password=`/`Bearer` values are redacted, and
+  each value is truncated to keep log lines bounded.
+- Every log record now carries a `type` discriminator (`tool`, `internal_api`,
+  `access`, `diagnostic`) so the four record shapes can be separated in a single
+  log index. This replaces the usage-only `kind` field. All records also share
+  the same `@timestamp` timestamp field (the server diagnostic log previously
+  used `timestamp`), so there is one timestamp field across every log line.
 - Optional stateless streamable-http mode via `AWX_MCP_STATELESS_HTTP` (default
   off). When enabled, `--serve` keeps no per-session state in-process, so
   multiple replicas can run behind a plain round-robin load balancer without
@@ -80,9 +89,9 @@ and this project adheres to [Semantic Versioning](https://semver.org).
 - Best-effort token revocation on shutdown (`atexit`) for tokens minted via
   username/password auth.
 - Verbose usage logging: `AWX_MCP_USAGE_LOG_FILE` records one JSON Lines
-  document per MCP tool call (`@timestamp`, `user`, `tool`, `kind`,
+  document per MCP tool call (`@timestamp`, `type`, `user`, `tool`, `params`,
   `trace_id`, `server_version`, `success`, `latency_ms`, `transport`,
-  `awx_host`, `error{type,message}` on failure). Each entry carries a `kind`
+  `awx_host`, `error{type,message}` on failure). Each entry carries a `type`
   of `"tool"` (regular tool calls) or `"internal_api"` (the one-time
   `/api/v2/me/` user-resolution call made at startup, recorded as
   `tool: "me"` with the HTTP verb and path in separate `method`/`endpoint`

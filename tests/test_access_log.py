@@ -68,6 +68,7 @@ def test_records_basic_request(_fresh_sink):
     entries = _read_entries(_fresh_sink)
     assert len(entries) == 1
     entry = entries[0]
+    assert entry["type"] == "access"
     assert entry["client_ip"] == "10.0.0.5"
     assert entry["method"] == "POST"
     assert entry["path"] == "/mcp"

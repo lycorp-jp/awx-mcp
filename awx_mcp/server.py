@@ -158,9 +158,10 @@ class _JsonLogFormatter(logging.Formatter):
 
     def format(self, record: logging.LogRecord) -> str:
         payload = {
-            "timestamp": datetime.fromtimestamp(
+            "@timestamp": datetime.fromtimestamp(
                 record.created, tz=timezone.utc
             ).isoformat(),
+            "type": "diagnostic",
             "level": record.levelname,
             "logger": record.name,
             "message": record.getMessage(),

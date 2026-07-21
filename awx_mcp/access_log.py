@@ -125,6 +125,7 @@ def _record(scope: dict[str, Any], status: int | None, start_monotonic: float) -
             return
         payload: dict[str, Any] = {
             "@timestamp": datetime.now(timezone.utc).isoformat(),
+            "type": "access",
             "client_ip": _client_ip(scope),
             "method": scope.get("method", "unknown"),
             "path": scope.get("path", "unknown"),

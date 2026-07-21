@@ -24,6 +24,7 @@ import inspect
 import json
 import logging
 import os
+import re
 import sys
 import threading
 import time
@@ -215,28 +216,114 @@ def _effective_transport() -> str:
     return os.environ.get("AWX_MCP_EFFECTIVE_TRANSPORT", "stdio")
 
 
+# Key names whose values are always redacted. Matched on whole ``_``-separated
+# segments so a secret-bearing name (``password``, ``ssh_key_data``, credential
+# ``inputs``) is redacted while a harmless id reference (``credential_id``) is
+# not. Applied to top-level tool arguments AND to nested keys inside dict/JSON
+# payloads.
+_SENSITIVE_PARAM_RE = re.compile(
+    r"(?:^|_)(?:password|passwd|secret|token|key|inputs|private)(?:_|$)",
+    re.IGNORECASE,
+)
+# Free-form payload params that routinely carry arbitrary secrets (AWX launch /
+# inventory-source variables, survey answers). Their whole value is redacted —
+# we cannot know which nested keys are sensitive, so we do not log them at all.
+_FREEFORM_SECRET_PARAMS = frozenset(
+    {"extra_vars", "source_vars", "variables", "vars", "survey_spec", "credential"}
+)
+# Cap each logged string value so a large payload cannot bloat the log line.
+_MAX_PARAM_VALUE_LEN = 512
+# Bound recursion into nested structures (defensive against cyclic/huge input).
+_MAX_REDACT_DEPTH = 6
+
+
+def _is_sensitive_key(key: Any) -> bool:
+    return bool(_SENSITIVE_PARAM_RE.search(str(key)))
+
+
+def _redact_value(value: Any, depth: int = 0) -> Any:
+    """Recursively redact secrets from a parameter value.
+
+    dict -> redact any value whose key is sensitive, recurse into the rest.
+    list -> recurse element-wise. JSON-looking strings are parsed and recursed
+    so nested ``api_key``/``ssh_key`` values (e.g. inside an ``extra_vars`` blob)
+    are caught; other strings pass through :func:`mask_secrets` (inline
+    ``token=``/``password=``/``Bearer``) and are truncated. Scalars pass through.
+    """
+    if depth > _MAX_REDACT_DEPTH:
+        return "<max-depth>"
+    if isinstance(value, dict):
+        return {
+            k: ("***" if _is_sensitive_key(k) else _redact_value(v, depth + 1))
+            for k, v in value.items()
+        }
+    if isinstance(value, (list, tuple)):
+        return [_redact_value(v, depth + 1) for v in value]
+    if isinstance(value, (int, float, bool)) or value is None:
+        return value
+    text = value if isinstance(value, str) else str(value)
+    stripped = text.strip()
+    if stripped[:1] in ("{", "["):
+        try:
+            return _redact_value(json.loads(stripped), depth + 1)
+        except (ValueError, TypeError):
+            pass
+    text = mask_secrets(text)
+    if len(text) > _MAX_PARAM_VALUE_LEN:
+        text = text[:_MAX_PARAM_VALUE_LEN] + "...(truncated)"
+    return text
+
+
+def _safe_params(kwargs: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Redact a tool's keyword arguments for safe logging.
+
+    A top-level key matching :data:`_SENSITIVE_PARAM_RE` or listed in
+    :data:`_FREEFORM_SECRET_PARAMS` is replaced with ``"***"`` wholesale; every
+    other value is passed through :func:`_redact_value`, which recurses into
+    nested dicts / lists / JSON strings so secret-named nested keys and inline
+    secrets are redacted too. Returns ``None`` when there are no arguments. Never
+    raises — logging must not affect the tool call.
+    """
+    if not kwargs:
+        return None
+    safe: dict[str, Any] = {}
+    for key, value in kwargs.items():
+        if _is_sensitive_key(key) or key in _FREEFORM_SECRET_PARAMS:
+            safe[key] = "***"
+            continue
+        try:
+            safe[key] = _redact_value(value)
+        except Exception:  # noqa: BLE001 — logging never affects the tool call
+            safe[key] = "<unserializable>"
+    return safe
+
+
 def build_payload(
     *,
     tool: str,
     success: bool,
     latency_ms: int,
     error: dict[str, str] | None = None,
-    kind: str = "tool",
+    record_type: str = "tool",
     user: str | None = None,
     transport: str | None = None,
     awx_host: str | None = None,
     method: str | None = None,
     endpoint: str | None = None,
+    params: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build the JSON usage document for a single call.
 
-    ``kind`` distinguishes an MCP ``tool`` call from an ``internal_api`` call
-    the server makes on its own behalf (e.g. the one-time ``/api/v2/me/`` user
-    lookup), so statistics can separate real tool usage from that overhead.
+    ``record_type`` (the ``type`` field) distinguishes an MCP ``tool`` call from
+    an ``internal_api`` call the server makes on its own behalf (e.g. the one-time
+    ``/api/v2/me/`` user lookup), so statistics can separate real tool usage from
+    that overhead. It shares the ``type`` field name with the access and
+    diagnostic log records so every awx-mcp log line can be split by ``type``.
     For an ``internal_api`` call ``method`` (the HTTP verb, e.g. ``GET``) and
     ``endpoint`` (the API path, e.g. ``/api/v2/me/``) are recorded as separate
     fields; ``tool`` then carries a short logical name (e.g. ``me``) so log
-    consumers filtering by ``tool`` never see an HTTP verb + path.
+    consumers filtering by ``tool`` never see an HTTP verb + path. ``params`` (a
+    tool call's redacted arguments) is included when present.
     ``user`` may be supplied directly to skip user resolution — required when
     recording an internal call from inside that resolution to avoid recursion,
     and by the proxy (which has no AWX access to resolve a username). ``transport``
@@ -246,9 +333,9 @@ def build_payload(
     """
     payload: dict[str, Any] = {
         "@timestamp": datetime.now(timezone.utc).isoformat(),
+        "type": record_type,
         "user": user if user is not None else resolve_user_identifier(),
         "tool": tool,
-        "kind": kind,
         "trace_id": str(uuid.uuid4()),
         "server_version": _server_version(),
         "success": success,
@@ -261,6 +348,8 @@ def build_payload(
         payload["method"] = method
     if endpoint is not None:
         payload["endpoint"] = endpoint
+    if params is not None:
+        payload["params"] = params
     if not success and error is not None:
         payload["error"] = error
     return payload
@@ -320,6 +409,7 @@ def _record(
     start_monotonic: float,
     success: bool,
     exc: BaseException | None,
+    params: dict[str, Any] | None = None,
 ) -> None:
     """Build and append a usage document. Swallows all errors."""
     try:
@@ -333,6 +423,7 @@ def _record(
             success=success,
             latency_ms=latency_ms,
             error=error,
+            params=_safe_params(params),
         )
         sink.info(json.dumps(payload, ensure_ascii=False))
     except Exception as exc:  # noqa: BLE001 — instrumentation never affects tools
@@ -347,6 +438,7 @@ def record_proxy_tool_call(
     *,
     user: str,
     awx_host: str,
+    params: dict[str, Any] | None = None,
 ) -> None:
     """Append a usage entry for a tool call relayed by the proxy.
 
@@ -355,6 +447,7 @@ def record_proxy_tool_call(
     through :func:`_record` — ``_record`` omits ``user=``, which would call
     :func:`resolve_user_identifier` -> lazy ``client``/``server`` import ->
     ``ANSIBLE_BASE_URL`` validation, crashing the proxy (which has no BASE_URL).
+    ``params`` are the relayed tool arguments; they are redacted before logging.
     Swallows all errors so logging never affects the relay.
     """
     try:
@@ -371,6 +464,7 @@ def record_proxy_tool_call(
             user=user,
             transport="proxy",
             awx_host=awx_host,
+            params=_safe_params(params),
         )
         sink.info(json.dumps(payload, ensure_ascii=False))
     except Exception as exc:  # noqa: BLE001 — logging never affects the relay
@@ -403,7 +497,7 @@ def _record_internal_api(
             success=success,
             latency_ms=latency_ms,
             error=error,
-            kind="internal_api",
+            record_type="internal_api",
             user=user,
             method=method,
             endpoint=endpoint,
@@ -438,7 +532,7 @@ def instrument_tool(func: Callable[..., Any]) -> Callable[..., Any]:
                 captured = exc
                 raise
             finally:
-                _record(func.__name__, start, success, captured)
+                _record(func.__name__, start, success, captured, params=kwargs)
 
         return async_wrapper
 
@@ -456,6 +550,6 @@ def instrument_tool(func: Callable[..., Any]) -> Callable[..., Any]:
             captured = exc
             raise
         finally:
-            _record(func.__name__, start, success, captured)
+            _record(func.__name__, start, success, captured, params=kwargs)
 
     return wrapper
