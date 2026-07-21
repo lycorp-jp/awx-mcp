@@ -33,10 +33,31 @@ from .server import (
     ANSIBLE_SSL_VERIFY,
     ANSIBLE_TOKEN,
     ANSIBLE_USERNAME,
+    AUTH_MODE,
     READ_ONLY,
+    get_request_header,
     logger,
 )
 from .utils import mask_secrets
+
+
+def get_request_token() -> str | None:
+    """Extract the caller's AWX token from the current request, or ``None``.
+
+    Used only in passthrough (``--serve``) mode. Prefers ``Authorization:
+    Bearer <token>`` (scheme match is case-insensitive) and falls back to the
+    ``X-AWX-Token`` header for environments where a proxy/gateway rewrites
+    ``Authorization``. Returns ``None`` outside a request (never raises).
+    """
+    auth = get_request_header("authorization")
+    if auth:
+        parts = auth.split(None, 1)
+        if len(parts) == 2 and parts[0].lower() == "bearer" and parts[1].strip():
+            return parts[1].strip()
+    fallback = get_request_header("x-awx-token")
+    if fallback and fallback.strip():
+        return fallback.strip()
+    return None
 
 
 def _default_port(scheme: str) -> int | None:
@@ -353,6 +374,23 @@ atexit.register(_atexit_drain)
 def get_ansible_client():
     """Get an initialized Ansible API client with token reuse."""
     global _cached_token, _cached_token_id
+
+    # Passthrough (--serve) mode: authenticate with the caller's per-request
+    # token. No caching, minting, or atexit revocation — the token belongs to
+    # the user, not this server, so sharing/revoking it across requests would
+    # be wrong.
+    if AUTH_MODE == "passthrough":
+        token = get_request_token()
+        if not token:
+            raise AnsibleAuthError(
+                "An AWX token is required in passthrough mode. Send it as "
+                "'Authorization: Bearer <token>' (or the X-AWX-Token header).",
+                status_code=401,
+            )
+        client = AnsibleClient(base_url=ANSIBLE_BASE_URL, token=token)
+        with client:
+            yield client
+        return
 
     # If we have a static token from env, always use it
     if ANSIBLE_TOKEN:

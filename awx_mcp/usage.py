@@ -19,10 +19,12 @@ date-suffixed backup, keeping ``AWX_MCP_LOG_BACKUP_COUNT`` backups (default 7).
 from __future__ import annotations
 
 import functools
+import hashlib
 import inspect
 import json
 import logging
 import os
+import sys
 import threading
 import time
 import uuid
@@ -38,6 +40,20 @@ logger = logging.getLogger("ansible-mcp.usage")
 
 # --- Configuration (read at import; path unset => instrumentation off) --------
 USAGE_LOG_FILE = os.environ.get("AWX_MCP_USAGE_LOG_FILE")
+
+
+def stdout_jsonl_enabled() -> bool:
+    """True when JSONL records may also be written to stdout.
+
+    Only the ``--serve`` network transports qualify: there stdout is unused, so
+    the usage/access JSON Lines are mirrored to it for log collectors
+    (``kubectl logs`` / fluentd). In stdio mode stdout carries the MCP protocol
+    and in proxy mode it carries the relayed stdio stream — never write there.
+    """
+    return os.environ.get("AWX_MCP_EFFECTIVE_TRANSPORT") in (
+        "sse",
+        "streamable-http",
+    )
 
 
 def log_backup_count() -> int:
@@ -60,21 +76,25 @@ def make_timed_rotating_handler(path: str) -> TimedRotatingFileHandler:
 
 
 # --- User + version resolution ------------------------------------------------
-# ``_user_cache`` holds the AWX username resolved once for the process lifetime.
-# This public repo has no per-request token context, so a single process-wide
-# cache (guarded by ``_user_lock``) is sufficient.
+# Static (local) mode has one identity for the process, cached in ``_user_cache``.
+# Passthrough (--serve) mode sees a different caller per request, so usernames are
+# cached per token in ``_user_cache_by_token`` keyed by a SHA-256 hash of the
+# token (the raw token is never stored, in memory or the log). Both caches are
+# guarded by ``_user_lock``.
 _user_cache: str | None = None
+_user_cache_by_token: dict[str, str] = {}
 _user_lock = threading.Lock()
+_MAX_TOKEN_CACHE = 1024
 
 
-def _lookup_me_username() -> str:
+def _lookup_me_username(token: str | None = None) -> str:
     """Query AWX ``/api/v2/me/`` for the username; also record the call.
 
-    Returns the username or ``"unknown"``. This ``/api/v2/me/`` request is the
-    single extra AWX API call that usage logging adds (once per process, then
-    cached by :func:`resolve_user_identifier`). It is itself written to the
-    usage log as an ``internal_api`` entry so statistics can account for the
-    added call.
+    Returns the username or ``"unknown"``. When ``token`` is given (passthrough
+    mode) the lookup uses a client built for that specific token; otherwise it
+    uses the process's static credentials. This is the single extra AWX API call
+    usage logging adds (once per identity, then cached). It is written to the
+    usage log as an ``internal_api`` entry so statistics can account for it.
     """
     start = time.monotonic()
     success = True
@@ -82,10 +102,18 @@ def _lookup_me_username() -> str:
     username = "unknown"
     try:
         # Imported lazily to avoid an import cycle (client -> server -> usage).
-        from .client import get_ansible_client
+        from .client import AnsibleClient, get_ansible_client
+        from .server import ANSIBLE_BASE_URL
 
-        with get_ansible_client() as client:
-            me = client.request("GET", "/api/v2/me/")
+        if token is not None:
+            # ANSIBLE_BASE_URL is validated non-None at server import in every
+            # mode; assert narrows str | None -> str for the type checker.
+            assert ANSIBLE_BASE_URL is not None
+            with AnsibleClient(base_url=ANSIBLE_BASE_URL, token=token) as client:
+                me = client.request("GET", "/api/v2/me/")
+        else:
+            with get_ansible_client() as client:
+                me = client.request("GET", "/api/v2/me/")
         results = me.get("results") if isinstance(me, dict) else None
         if results:
             username = results[0].get("username") or "unknown"
@@ -100,18 +128,51 @@ def _lookup_me_username() -> str:
         latency_ms = int((time.monotonic() - start) * 1000)
         # Pass the resolved username explicitly so this does NOT re-enter
         # resolve_user_identifier (which is mid-flight calling us).
-        _record_internal_api("GET /api/v2/me/", username, success, latency_ms, error)
+        _record_internal_api(
+            "me",
+            username,
+            success,
+            latency_ms,
+            error,
+            method="GET",
+            endpoint="/api/v2/me/",
+        )
     return username
 
 
 def resolve_user_identifier() -> str:
     """Resolve the AWX username for usage attribution (lazy, cached).
 
-    Resolved once and cached for the process lifetime. On any failure the result
-    is ``"unknown"`` and still cached, so a broken lookup is not retried on every
-    tool call.
+    In static mode the identity is resolved once and cached for the process
+    lifetime. In passthrough mode it is resolved per request from the caller's
+    token and cached by token hash (so a repeat caller triggers only one
+    ``/api/v2/me/`` lookup). On any failure the result is ``"unknown"``.
     """
     global _user_cache
+
+    # AUTH_MODE is imported lazily: server.py imports this module before it
+    # defines AUTH_MODE, so a module-top import would be a cycle.
+    from .server import AUTH_MODE
+
+    if AUTH_MODE == "passthrough":
+        from .client import get_request_token
+
+        token = get_request_token()
+        if not token:
+            return "unknown"
+        key = hashlib.sha256(token.encode("utf-8")).hexdigest()[:16]
+        cached = _user_cache_by_token.get(key)
+        if cached is not None:
+            return cached
+        with _user_lock:
+            cached = _user_cache_by_token.get(key)
+            if cached is not None:
+                return cached
+            username = _lookup_me_username(token=token)
+            if len(_user_cache_by_token) >= _MAX_TOKEN_CACHE:
+                _user_cache_by_token.clear()
+            _user_cache_by_token[key] = username
+            return username
 
     if _user_cache is not None:
         return _user_cache
@@ -144,6 +205,16 @@ def _awx_host() -> str:
 
 
 # --- Payload ------------------------------------------------------------------
+def _effective_transport() -> str:
+    """The transport label for usage records.
+
+    Derived from an internal env indicator set by the CLI (``main()``), NOT from
+    the removed ``AWX_MCP_TRANSPORT``: ``stdio`` (local), ``streamable-http`` or
+    ``sse`` (``--serve``). The proxy passes ``transport="proxy"`` explicitly.
+    """
+    return os.environ.get("AWX_MCP_EFFECTIVE_TRANSPORT", "stdio")
+
+
 def build_payload(
     *,
     tool: str,
@@ -152,14 +223,26 @@ def build_payload(
     error: dict[str, str] | None = None,
     kind: str = "tool",
     user: str | None = None,
+    transport: str | None = None,
+    awx_host: str | None = None,
+    method: str | None = None,
+    endpoint: str | None = None,
 ) -> dict[str, Any]:
     """Build the JSON usage document for a single call.
 
     ``kind`` distinguishes an MCP ``tool`` call from an ``internal_api`` call
     the server makes on its own behalf (e.g. the one-time ``/api/v2/me/`` user
     lookup), so statistics can separate real tool usage from that overhead.
+    For an ``internal_api`` call ``method`` (the HTTP verb, e.g. ``GET``) and
+    ``endpoint`` (the API path, e.g. ``/api/v2/me/``) are recorded as separate
+    fields; ``tool`` then carries a short logical name (e.g. ``me``) so log
+    consumers filtering by ``tool`` never see an HTTP verb + path.
     ``user`` may be supplied directly to skip user resolution — required when
-    recording an internal call from inside that resolution to avoid recursion.
+    recording an internal call from inside that resolution to avoid recursion,
+    and by the proxy (which has no AWX access to resolve a username). ``transport``
+    and ``awx_host`` may likewise be supplied directly; the proxy passes
+    ``transport="proxy"`` and the central host because the env-derived defaults
+    (``AWX_MCP_EFFECTIVE_TRANSPORT`` / ``ANSIBLE_BASE_URL``) do not apply there.
     """
     payload: dict[str, Any] = {
         "@timestamp": datetime.now(timezone.utc).isoformat(),
@@ -170,9 +253,14 @@ def build_payload(
         "server_version": _server_version(),
         "success": success,
         "latency_ms": latency_ms,
-        "transport": os.environ.get("AWX_MCP_TRANSPORT", "stdio"),
-        "awx_host": _awx_host(),
+        "auth_mode": os.environ.get("AWX_MCP_AUTH_MODE", "static"),
+        "transport": transport if transport is not None else _effective_transport(),
+        "awx_host": awx_host if awx_host is not None else _awx_host(),
     }
+    if method is not None:
+        payload["method"] = method
+    if endpoint is not None:
+        payload["endpoint"] = endpoint
     if not success and error is not None:
         payload["error"] = error
     return payload
@@ -188,18 +276,20 @@ _usage_logger_lock = threading.Lock()
 
 
 def _is_enabled() -> bool:
-    return bool(USAGE_LOG_FILE)
+    return bool(USAGE_LOG_FILE) or stdout_jsonl_enabled()
 
 
 def _get_usage_logger() -> logging.Logger | None:
     """Return the JSON Lines logger, building it lazily on first use.
 
-    Returns ``None`` when instrumentation is disabled. The logger writes raw
-    JSON (formatter is ``%(message)s``) and never propagates, so nothing reaches
-    the root logger's stderr handler or stdout.
+    Returns ``None`` when instrumentation is disabled. Sinks: the rotating file
+    (when ``AWX_MCP_USAGE_LOG_FILE`` is set) and, in ``--serve`` mode, stdout
+    (see :func:`stdout_jsonl_enabled`) — both raw JSON (formatter is
+    ``%(message)s``). The logger never propagates, so nothing reaches the root
+    logger's stderr handler.
     """
     global _usage_logger
-    if not USAGE_LOG_FILE:
+    if not _is_enabled():
         return None
     if _usage_logger is not None:
         return _usage_logger
@@ -212,9 +302,15 @@ def _get_usage_logger() -> logging.Logger | None:
         lg.handlers.clear()
         lg.setLevel(logging.INFO)
         lg.propagate = False
-        handler = make_timed_rotating_handler(USAGE_LOG_FILE)
-        handler.setFormatter(logging.Formatter("%(message)s"))
-        lg.addHandler(handler)
+        raw = logging.Formatter("%(message)s")
+        if USAGE_LOG_FILE:
+            handler = make_timed_rotating_handler(USAGE_LOG_FILE)
+            handler.setFormatter(raw)
+            lg.addHandler(handler)
+        if stdout_jsonl_enabled():
+            stdout_handler = logging.StreamHandler(sys.stdout)
+            stdout_handler.setFormatter(raw)
+            lg.addHandler(stdout_handler)
         _usage_logger = lg
     return _usage_logger
 
@@ -243,17 +339,60 @@ def _record(
         logger.debug("usage recording failed: %s", type(exc).__name__)
 
 
+def record_proxy_tool_call(
+    tool_name: str,
+    start_monotonic: float,
+    success: bool,
+    exc: BaseException | None,
+    *,
+    user: str,
+    awx_host: str,
+) -> None:
+    """Append a usage entry for a tool call relayed by the proxy.
+
+    A dedicated recorder for proxy (``--remote``) mode. It builds the payload
+    directly with ``user``/``transport``/``awx_host`` supplied, and never routes
+    through :func:`_record` — ``_record`` omits ``user=``, which would call
+    :func:`resolve_user_identifier` -> lazy ``client``/``server`` import ->
+    ``ANSIBLE_BASE_URL`` validation, crashing the proxy (which has no BASE_URL).
+    Swallows all errors so logging never affects the relay.
+    """
+    try:
+        sink = _get_usage_logger()
+        if sink is None:
+            return
+        latency_ms = int((time.monotonic() - start_monotonic) * 1000)
+        error = _error_info(exc) if (not success and exc is not None) else None
+        payload = build_payload(
+            tool=tool_name,
+            success=success,
+            latency_ms=latency_ms,
+            error=error,
+            user=user,
+            transport="proxy",
+            awx_host=awx_host,
+        )
+        sink.info(json.dumps(payload, ensure_ascii=False))
+    except Exception as exc:  # noqa: BLE001 — logging never affects the relay
+        logger.debug("proxy usage recording failed: %s", type(exc).__name__)
+
+
 def _record_internal_api(
     tool_name: str,
     user: str,
     success: bool,
     latency_ms: int,
     error: dict[str, str] | None,
+    *,
+    method: str | None = None,
+    endpoint: str | None = None,
 ) -> None:
     """Append a usage entry for an internal AWX API call (``kind=internal_api``).
 
     ``user`` is passed explicitly and never re-resolved, so this is safe to call
-    from within user resolution. Swallows all errors.
+    from within user resolution. ``method``/``endpoint`` record the HTTP verb and
+    API path as separate fields (``tool_name`` is the short logical name). Swallows
+    all errors.
     """
     try:
         sink = _get_usage_logger()
@@ -266,6 +405,8 @@ def _record_internal_api(
             error=error,
             kind="internal_api",
             user=user,
+            method=method,
+            endpoint=endpoint,
         )
         sink.info(json.dumps(payload, ensure_ascii=False))
     except Exception as exc:  # noqa: BLE001 — instrumentation never affects tools

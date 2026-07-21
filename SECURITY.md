@@ -9,8 +9,9 @@ Do not open a public issue for security vulnerabilities.
 
 ## Threat Model
 
-This server runs on the operator's host with a static AWX token supplied via
-environment variable. The trust boundary sits between three components:
+In the default **local** mode the server runs on the operator's host with a
+static AWX token supplied via environment variable. The trust boundary sits
+between three components:
 
 ```
 MCP client (LLM) <-> MCP server (this process) <-> AWX REST API
@@ -18,6 +19,32 @@ MCP client (LLM) <-> MCP server (this process) <-> AWX REST API
 
 The server itself is trusted; the LLM is untrusted input. AWX enforces its
 own RBAC on every API call using the configured token.
+
+### Central multi-user mode (`--serve` + `--remote`)
+
+`awx-mcp --serve` runs one shared server for many users. It holds **no** AWX
+credential of its own; each request must carry the caller's own AWX token in an
+`Authorization: Bearer <token>` (or `X-AWX-Token`) header, and every AWX call is
+made with that per-caller token. AWX RBAC therefore applies per user, and the
+usage log attributes each tool call to the caller's AWX account.
+
+Because the caller's token travels in a request header, the transport must be
+protected: enable in-process TLS (`AWX_MCP_TLS_ENABLE`) or front the server with
+an authenticating TLS reverse proxy. A non-local bind without TLS logs a warning
+at startup. Users typically connect with `awx-mcp --remote <URL>`, a stdio proxy
+that injects their `ANSIBLE_TOKEN` as the header (username/password auth is not
+supported in proxy mode — only a personal access token can be forwarded).
+
+Per-user read-only (`AWX_MCP_READ_ONLY=true` on the client, sent as
+`X-AWX-Read-Only`) is **advisory self-restriction**, not a security boundary: it
+can only tighten a caller's own access. The real boundaries are the caller's AWX
+token scope/RBAC and a server-global `AWX_MCP_READ_ONLY` (which unregisters write
+tools entirely and cannot be re-enabled by a user).
+
+Enabling `AWX_MCP_ENABLE_CREDENTIAL_MANAGEMENT=true` together with `--serve` is
+discouraged: the gated tools collect sensitive data via Form-mode elicitation
+(see below), which is worse in a shared network deployment than on a local
+stdio process.
 
 All 4 credential/user write tools (`create_credential`, `update_credential`,
 `create_user`, `update_user`) are gated behind
@@ -59,6 +86,11 @@ Notable security-relevant changes, newest first. See the
 [CHANGELOG](CHANGELOG.md) and
 [release notes](https://github.com/lycorp-jp/awx-mcp/releases) for full detail.
 
+- Added central multi-user passthrough mode (`awx-mcp --serve`): per-request
+  caller tokens, no shared static server credential, per-user usage attribution,
+  and a per-user advisory read-only header. Removed the previous static-token
+  network server mode (`--transport`/`AWX_MCP_TRANSPORT`), which authenticated
+  all users as one identity.
 - In read-only mode (`AWX_MCP_READ_ONLY=true`), the AWX token minted via
   username/password auth now requests `scope: "read"` instead of `"write"`.
 - AWX error response bodies are now secret-masked (bearer tokens, `token=`,

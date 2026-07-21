@@ -37,8 +37,15 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
-    "mcp>=1.28.1",
+    # Upper bound: passthrough mode reads the inbound request via the FastMCP
+    # request-context contract (RequestContext.request), which the SDK annotates
+    # loosely — pin the major so `uv sync` cannot silently move it. Lower bound
+    # tracks upstream (bumped to 1.28.1 by dependabot #19).
+    "mcp>=1.28.1,<2",
     "requests>=2.33.0",
+    # Used directly by the proxy (awx-mcp --remote) to inject the caller's token
+    # header; also a transitive mcp dependency.
+    "httpx>=0.27",
 ]
 
 [project.urls]

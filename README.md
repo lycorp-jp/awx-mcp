@@ -154,16 +154,15 @@ uv sync
 export ANSIBLE_BASE_URL="https://awx.example.com/"
 export ANSIBLE_TOKEN="your_api_token"
 
-# 4a. Run with stdio (default — for local MCP clients)
+# 4a. Local mode (default — a stdio server for your own MCP client)
 uv run awx-mcp
 
-# 4b. Run with Streamable HTTP (for remote/shared access)
-uv run awx-mcp --transport streamable-http --host 127.0.0.1 --port 8000
-#    Endpoint: http://127.0.0.1:8000/mcp
+# 4b. Central server for a team (admin): one shared server, per-user tokens
+uv run awx-mcp --serve --host 0.0.0.0 --port 8443
+#    Endpoint: http://HOST:8443/mcp  (add --sse for http://HOST:8443/sse)
 
-# 4c. Run with SSE
-uv run awx-mcp --transport sse --port 8000
-#    Endpoint: http://127.0.0.1:8000/sse
+# 4c. Connect to a central server (user): proxy, no local server
+uv run awx-mcp --remote https://awx-mcp.example.com:8443/mcp
 ```
 
 When configuring an MCP client, run from any directory by passing the clone path with `--directory`:
@@ -172,9 +171,80 @@ When configuring an MCP client, run from any directory by passing the clone path
 uv run --directory /path/to/awx-mcp awx-mcp
 ```
 
-**CLI flags** (`--transport`, `--host`, `--port`) override the `AWX_MCP_TRANSPORT`, `AWX_MCP_HOST`, and `AWX_MCP_PORT` environment variables.
+**Running modes are selected by CLI flags** — see [Deployment modes](#deployment-modes) for the full picture:
 
-> For stdio, you normally let the MCP client launch the process automatically (see [MCP Client Integration](#mcp-client-integration)) rather than running it by hand.
+| Command | Mode | Who runs it |
+|---------|------|-------------|
+| `awx-mcp` | Local stdio server (own AWX token) | each user, locally |
+| `awx-mcp --remote <URL>` | Client proxy to a central server | each user, locally |
+| `awx-mcp --serve [--sse]` | Central multi-user server (per-request tokens) | an admin, once |
+
+`--host`/`--port` apply to `--serve` and override `AWX_MCP_HOST` / `AWX_MCP_PORT`. There is no `--transport` flag (removed — see [CHANGELOG](CHANGELOG.md)).
+
+> For local mode you normally let the MCP client launch the process automatically (see [MCP Client Integration](#mcp-client-integration)) rather than running it by hand.
+
+---
+
+## Deployment modes
+
+awx-mcp runs in one of three modes, chosen by CLI flag. The token is always the user's own AWX personal access token supplied via `ANSIBLE_TOKEN`; only the flag differs.
+
+### 1. Local (default)
+
+Each user runs a local stdio server that talks to AWX with their own token.
+
+```json
+{
+  "mcpServers": {
+    "awx": {
+      "command": "uv",
+      "args": ["run", "--directory", "/path/to/awx-mcp", "awx-mcp"],
+      "env": {
+        "ANSIBLE_BASE_URL": "https://awx.example.com/",
+        "ANSIBLE_TOKEN": "your_api_token"
+      }
+    }
+  }
+}
+```
+
+Set `AWX_MCP_USAGE_LOG_FILE` to also record your own tool calls locally.
+
+### 2. Central server — admin (`--serve`)
+
+An admin runs **one** shared server. It holds no AWX credential; each request is authenticated with the **caller's own token**, and every tool call is attributed to that caller in the usage log. TLS is strongly recommended because caller tokens travel in a request header.
+
+```bash
+export ANSIBLE_BASE_URL=https://awx.example.com/
+export AWX_MCP_USAGE_LOG_FILE=/var/log/awx-mcp/usage.jsonl   # per-user attribution
+export AWX_MCP_TLS_ENABLE=true
+export AWX_MCP_TLS_CERT=/etc/awx-mcp/cert.pem
+export AWX_MCP_TLS_KEY=/etc/awx-mcp/key.pem
+uv run awx-mcp --serve --host 0.0.0.0 --port 8443        # add --sse for the sse transport
+```
+
+`ANSIBLE_TOKEN` / `ANSIBLE_USERNAME` / `ANSIBLE_PASSWORD` are ignored in `--serve` mode (a warning is logged if set) — the server has no identity of its own.
+
+### 3. Central server — user (`--remote`)
+
+Each user runs a stdio **proxy** that relays to the central server, injecting their own token as an `Authorization: Bearer` header. No local server is started; the central server must be running.
+
+```json
+{
+  "mcpServers": {
+    "awx": {
+      "command": "uv",
+      "args": ["run", "--directory", "/path/to/awx-mcp",
+               "awx-mcp", "--remote", "https://awx-mcp.example.com:8443/mcp"],
+      "env": { "ANSIBLE_TOKEN": "your_api_token" }
+    }
+  }
+}
+```
+
+`ANSIBLE_BASE_URL` is not needed (the central server reaches AWX). Proxy mode is **personal-access-token only** — `ANSIBLE_USERNAME`/`PASSWORD` cannot be forwarded as a Bearer header. `ANSIBLE_SSL_VERIFY`/`ANSIBLE_CA_BUNDLE` here verify the connection to the **central server**, not to AWX. Set `AWX_MCP_USAGE_LOG_FILE` (and optionally `AWX_MCP_USAGE_USER`) to also keep a local usage log.
+
+> MCP clients that support `${VAR}` expansion in a `headers` block may connect to the central server directly, without the proxy: `{ "type": "streamable-http", "url": "https://awx-mcp.example.com:8443/mcp", "headers": { "Authorization": "Bearer ${AWX_TOKEN}" } }`.
 
 ---
 
@@ -217,15 +287,16 @@ The server automatically creates and caches an OAuth2 token on your behalf.
 | `ANSIBLE_CA_BUNDLE` | unset | Path to a custom CA bundle / self-signed certificate (PEM) to trust when verification is enabled. Lets you connect to an AWX instance with a private CA without disabling verification. The server fails fast at startup if the path doesn't exist. |
 | `ANSIBLE_LOG_LEVEL` | `INFO` | Log level (`DEBUG`, `INFO`, `WARNING`, `ERROR`) |
 | `AWX_MCP_ENABLE_CREDENTIAL_MANAGEMENT` | `false` | Opt-in for the 4 credential/user write tools that collect sensitive data via Form-mode elicitation. See [Credential Management](#credential-management-opt-in). |
-| `AWX_MCP_READ_ONLY` | `false` | When `true`, all write/destructive tools are unregistered at startup; only read-only tools (`list_*`/`get_*`) are exposed. Useful for safe inspection or audit-only automation. |
-| `AWX_MCP_TRANSPORT` | `stdio` | MCP transport to use: `stdio`, `sse`, or `streamable-http`. |
-| `AWX_MCP_HOST` | `127.0.0.1` | Bind host for `sse` and `streamable-http` transports. |
-| `AWX_MCP_PORT` | `8000` | Bind port for `sse` and `streamable-http` transports. |
-| `AWX_MCP_TLS_ENABLE` | `false` | When `true`, the `sse`/`streamable-http` server serves HTTPS in-process (uvicorn). Ignored for `stdio` (no network socket; a warning is logged). |
-| `AWX_MCP_TLS_CERT` | unset | Path to the server's TLS certificate (PEM). Required when `AWX_MCP_TLS_ENABLE=true` on a network transport; the server fails fast at startup if missing or not found. |
+| `AWX_MCP_READ_ONLY` | `false` | Read-only mode. On the `--serve` central server, `true` unregisters all write/destructive tools globally (users cannot re-enable). In `--remote` proxy mode, `true` restricts only that user's session (the proxy sends `X-AWX-Read-Only`; the server rejects that caller's write calls). Advisory self-limit — see [Deployment modes](#deployment-modes). |
+| `AWX_MCP_REMOTE_URL` | unset | Central server URL for proxy mode (equivalent to `--remote <URL>`; the flag takes precedence). |
+| `AWX_MCP_HOST` | `127.0.0.1` | Bind host for the `--serve` server. Overridden by `--host`. |
+| `AWX_MCP_PORT` | `8000` | Bind port for the `--serve` server. Overridden by `--port`. |
+| `AWX_MCP_TLS_ENABLE` | `false` | When `true`, the `--serve` server serves HTTPS in-process (uvicorn). Strongly recommended, since caller tokens travel in a request header. |
+| `AWX_MCP_TLS_CERT` | unset | Path to the server's TLS certificate (PEM). Required when `AWX_MCP_TLS_ENABLE=true`; the server fails fast at startup if missing or not found. |
 | `AWX_MCP_TLS_KEY` | unset | Path to the server's TLS private key (PEM). Required when TLS is enabled. |
 | `AWX_MCP_TLS_KEY_PASSWORD` | unset | Password for the private key, if it is encrypted. Optional. |
-| `AWX_MCP_USAGE_LOG_FILE` | unset | Path to a JSON Lines usage log; every MCP tool call is recorded as one JSON document (`@timestamp`, `user`, `tool`, `kind`, `trace_id`, `server_version`, `success`, `latency_ms`, `transport`, `awx_host`, `error{type,message}` on failure). Unset means no file is created and instrumentation is disabled. See [Verbose usage logging](#verbose-usage-logging). |
+| `AWX_MCP_USAGE_LOG_FILE` | unset | Path to a JSON Lines usage log; every MCP tool call is recorded as one JSON document (`@timestamp`, `user`, `tool`, `kind`, `trace_id`, `server_version`, `success`, `latency_ms`, `auth_mode`, `transport`, `awx_host`, `error{type,message}` on failure). Works in every mode, including the `--remote` proxy. Unset disables instrumentation. See [Verbose usage logging](#verbose-usage-logging). |
+| `AWX_MCP_USAGE_USER` | unset | Optional label used as the `user` field in the proxy's local usage log (proxy mode has no AWX access to resolve a username; defaults to `local`). |
 | `AWX_MCP_SERVER_LOG_FILE` | unset | Path to a server diagnostic log file, mirroring the existing stderr diagnostics and errors. Unset means stderr only, no file. |
 | `AWX_MCP_SERVER_LOG_FORMAT` | `plain` | Server diagnostic log format: `plain` or `json`. |
 | `AWX_MCP_LOG_BACKUP_COUNT` | `7` | Number of rotated log files to retain. Both log files rotate daily at midnight (UTC) with a date suffix. |
@@ -240,7 +311,7 @@ Setting `ANSIBLE_SSL_VERIFY=false` disables verification entirely; the server lo
 
 This is **inbound** TLS — encrypting the connection from MCP clients to this server — which is a different direction from the outbound AWX certificate verification controlled by `ANSIBLE_SSL_VERIFY`. Don't confuse the two.
 
-It only applies to the `sse` and `streamable-http` transports. `stdio` has no network socket — it's a local pipe between the MCP client and this process — so TLS doesn't apply there; security instead comes from process/host isolation.
+It only applies to the `--serve` central server (streamable-http or sse). Local stdio mode has no network socket — it's a local pipe between the MCP client and this process — so TLS doesn't apply there; security instead comes from process/host isolation.
 
 To enable, set `AWX_MCP_TLS_ENABLE=true` along with `AWX_MCP_TLS_CERT` and `AWX_MCP_TLS_KEY` (and `AWX_MCP_TLS_KEY_PASSWORD` if the key is encrypted):
 
@@ -248,16 +319,18 @@ To enable, set `AWX_MCP_TLS_ENABLE=true` along with `AWX_MCP_TLS_CERT` and `AWX_
 export AWX_MCP_TLS_ENABLE=true
 export AWX_MCP_TLS_CERT=/path/to/server.crt
 export AWX_MCP_TLS_KEY=/path/to/server.key
-uv run awx-mcp --transport streamable-http --host 0.0.0.0 --port 8443
+uv run awx-mcp --serve --host 0.0.0.0 --port 8443
 ```
 
-**Important:** HTTPS only encrypts traffic — it does not authenticate *who* is connecting. This server has no per-request client authentication; it uses a single `ANSIBLE_TOKEN` for all AWX calls. A network-exposed HTTPS endpoint must still be protected by network policy, a firewall, or an authenticating reverse proxy. In Kubernetes, terminating TLS at the ingress is the usual approach; in-process TLS here is only needed when you require end-to-end encryption all the way to the pod.
+**Important:** In `--serve` mode each request *is* authenticated — by the caller's own AWX token in the `Authorization` header — and TLS protects that token in transit, so enabling TLS (or fronting the server with an authenticating TLS reverse proxy) is important, not optional, for any network-exposed deployment. A non-local bind without TLS logs a warning at startup. In Kubernetes, terminating TLS at the ingress is the usual approach; in-process TLS here is only needed when you require end-to-end encryption all the way to the pod.
 
 ### Verbose usage logging
 
 Usage logging is opt-in: set `AWX_MCP_USAGE_LOG_FILE` to a writable path to start recording one JSON document per tool call in [JSON Lines](https://jsonlines.org/) format, designed to be picked up by external log collectors (Filebeat, Fluentd, etc.) for later collection and statistics. Logs are never written to stdout — the MCP stdio transport uses stdout for protocol messages, so writing logs there would corrupt the protocol stream. No log data is sent over the network by the server itself; it only writes to the local file(s) you configure.
 
-Each entry also carries a `kind` field: `"tool"` for regular MCP tool calls, and `"internal_api"` for the one-time `/api/v2/me/` user-resolution call the server makes at startup (recorded with `tool: "GET /api/v2/me/"`). This lets your statistics separate real tool usage from that internal overhead.
+Each entry also carries a `kind` field: `"tool"` for regular MCP tool calls, and `"internal_api"` for the `/api/v2/me/` user-resolution call the server makes (recorded with `tool: "me"` and the HTTP verb and path in separate `method`/`endpoint` fields). This lets your statistics separate real tool usage from that internal overhead.
+
+The `auth_mode` field is `static` (local) or `passthrough` (`--serve`). The `transport` field is one of `stdio`, `streamable-http`, `sse`, or `proxy`. In the central server the `user` field is the AWX account behind each request's token (per-user attribution, resolved once per token and cached; the raw token and its hash are never logged). In the `--remote` proxy's own local log, `transport` is `proxy`, `user` is `AWX_MCP_USAGE_USER` (or `local`), and `awx_host` is the central server's host.
 
 ---
 
@@ -271,7 +344,7 @@ To enable them, set:
 AWX_MCP_ENABLE_CREDENTIAL_MANAGEMENT=true
 ```
 
-Form-mode elicitation is not spec-compliant for sensitive data per the MCP specification — the response may still be exposed through client-side logging or other intermediate systems. Enable only in trusted, isolated environments. For the full threat model and disclosure policy, see [SECURITY.md](./SECURITY.md).
+Form-mode elicitation is not spec-compliant for sensitive data per the MCP specification — the response may still be exposed through client-side logging or other intermediate systems. Enable only in trusted, isolated environments, and **not** together with `--serve` (a shared network deployment makes this worse than a local stdio process). For the full threat model and disclosure policy, see [SECURITY.md](./SECURITY.md).
 
 ---
 
@@ -322,31 +395,42 @@ Add to the MCP server config:
 }
 ```
 
-### HTTP & SSE transports
+### Connecting to a central server
 
-When the server is running with `--transport streamable-http` or `--transport sse`, point your MCP client at the HTTP endpoint instead of using a subprocess command.
+When an admin runs a central `awx-mcp --serve` instance, users connect in one of two ways. Both send the user's own AWX token; the recommended proxy path keeps the token in an env var and works with any MCP client.
 
-**Streamable HTTP** (endpoint: `http://host:8000/mcp`):
-
-```json
-{
-  "mcpServers": {
-    "awx": { "type": "streamable-http", "url": "http://127.0.0.1:8000/mcp" }
-  }
-}
-```
-
-**SSE** (endpoint: `http://host:8000/sse`):
+**Proxy (recommended)** — a local stdio process; token stays in `ANSIBLE_TOKEN`:
 
 ```json
 {
   "mcpServers": {
-    "awx": { "type": "sse", "url": "http://127.0.0.1:8000/sse" }
+    "awx": {
+      "command": "uv",
+      "args": ["run", "--directory", "/path/to/awx-mcp",
+               "awx-mcp", "--remote", "https://awx-mcp.example.com:8443/mcp"],
+      "env": { "ANSIBLE_TOKEN": "your_api_token" }
+    }
   }
 }
 ```
 
-> **Security (IMPORTANT):** The HTTP/SSE transports have **no built-in authentication**. By default the server binds to `127.0.0.1` (loopback only). If you bind to a non-loopback address the server logs a warning. For any network-exposed deployment, place the server behind an **authenticating TLS reverse proxy** and restrict port access with a firewall. Never expose the server directly to untrusted networks.
+**Direct HTTP** — for MCP clients that expand `${VAR}` in a `headers` block (no local process):
+
+```json
+{
+  "mcpServers": {
+    "awx": {
+      "type": "streamable-http",
+      "url": "https://awx-mcp.example.com:8443/mcp",
+      "headers": { "Authorization": "Bearer ${AWX_TOKEN}" }
+    }
+  }
+}
+```
+
+For the sse transport (`awx-mcp --serve --sse`), use `"type": "sse"` and the `/sse` endpoint.
+
+> **Security (IMPORTANT):** In `--serve` mode each request is authenticated by the caller's own AWX token, and AWX RBAC applies per user. Because that token travels in a request header, protect the transport: enable in-process TLS (`AWX_MCP_TLS_ENABLE`) or front the server with an authenticating TLS reverse proxy, and restrict port access with a firewall. The server binds to `127.0.0.1` by default and logs a warning on a non-local bind without TLS.
 
 ---
 

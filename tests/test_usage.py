@@ -258,7 +258,9 @@ def test_user_resolution_failure_falls_back_to_unknown(monkeypatch, tmp_path):
     me_entry = next(e for e in entries if e["kind"] == "internal_api")
     tool_entry = next(e for e in entries if e["kind"] == "tool")
 
-    assert me_entry["tool"] == "GET /api/v2/me/"
+    assert me_entry["tool"] == "me"
+    assert me_entry["method"] == "GET"
+    assert me_entry["endpoint"] == "/api/v2/me/"
     assert me_entry["success"] is False
 
     # The failed user lookup must not affect the tool call.
@@ -298,7 +300,9 @@ def test_me_lookup_recorded_as_internal_api(monkeypatch, tmp_path):
     me_entry = next(e for e in entries if e["kind"] == "internal_api")
     tool_entry = next(e for e in entries if e["kind"] == "tool")
 
-    assert me_entry["tool"] == "GET /api/v2/me/"
+    assert me_entry["tool"] == "me"
+    assert me_entry["method"] == "GET"
+    assert me_entry["endpoint"] == "/api/v2/me/"
     assert me_entry["success"] is True
     assert me_entry["user"] == "alice"
     # The /me/ call is resolved once and attributed to the tool call too.
@@ -413,6 +417,117 @@ def test_server_log_file_plain_format(tmp_path):
 
     assert result.stdout == "STDOUT_SENTINEL"
     assert "diagnostic-probe-message" not in result.stdout
+
+
+# ---------------------------------------------------------------------------
+# passthrough: per-token user cache + attribution (no raw token in the log)
+# ---------------------------------------------------------------------------
+
+
+def test_passthrough_per_token_user_cache(monkeypatch, tmp_path):
+    mod = _reload_usage(monkeypatch, AWX_MCP_USAGE_LOG_FILE=str(tmp_path / "u.jsonl"))
+    monkeypatch.setattr("awx_mcp.server.AUTH_MODE", "passthrough")
+
+    current = {"t": "tokA"}
+    monkeypatch.setattr("awx_mcp.client.get_request_token", lambda: current["t"])
+
+    names = {"tokA": "alice", "tokB": "bob"}
+    looked_up: list[str] = []
+
+    def fake_lookup(token=None):
+        looked_up.append(token)
+        return names[token]
+
+    monkeypatch.setattr(mod, "_lookup_me_username", fake_lookup)
+
+    # Same token twice -> one /api/v2/me/ lookup, cached thereafter.
+    assert mod.resolve_user_identifier() == "alice"
+    assert mod.resolve_user_identifier() == "alice"
+    # Different token -> a distinct identity, its own lookup.
+    current["t"] = "tokB"
+    assert mod.resolve_user_identifier() == "bob"
+
+    assert looked_up == ["tokA", "tokB"]
+
+
+def test_passthrough_no_token_is_unknown(monkeypatch, tmp_path):
+    mod = _reload_usage(monkeypatch, AWX_MCP_USAGE_LOG_FILE=str(tmp_path / "u.jsonl"))
+    monkeypatch.setattr("awx_mcp.server.AUTH_MODE", "passthrough")
+    monkeypatch.setattr("awx_mcp.client.get_request_token", lambda: None)
+    monkeypatch.setattr(
+        mod, "_lookup_me_username", lambda token=None: pytest.fail("no lookup")
+    )
+    assert mod.resolve_user_identifier() == "unknown"
+
+
+def test_passthrough_token_cache_bounded(monkeypatch, tmp_path):
+    mod = _reload_usage(monkeypatch, AWX_MCP_USAGE_LOG_FILE=str(tmp_path / "u.jsonl"))
+    monkeypatch.setattr("awx_mcp.server.AUTH_MODE", "passthrough")
+    monkeypatch.setattr(mod, "_MAX_TOKEN_CACHE", 2)
+    monkeypatch.setattr(mod, "_lookup_me_username", lambda token=None: f"u-{token}")
+
+    for tok in ("t1", "t2", "t3", "t4"):
+        monkeypatch.setattr("awx_mcp.client.get_request_token", lambda t=tok: t)
+        mod.resolve_user_identifier()
+
+    # The cache never grows without bound (cleared when it reaches the cap).
+    assert len(mod._user_cache_by_token) <= mod._MAX_TOKEN_CACHE
+
+
+def test_passthrough_log_line_has_no_raw_token(monkeypatch, tmp_path):
+    log_file = tmp_path / "u.jsonl"
+    mod = _reload_usage(
+        monkeypatch,
+        AWX_MCP_USAGE_LOG_FILE=str(log_file),
+        AWX_MCP_AUTH_MODE="passthrough",
+    )
+    monkeypatch.setattr("awx_mcp.server.AUTH_MODE", "passthrough")
+    secret = "super-secret-token-XYZ"
+    monkeypatch.setattr("awx_mcp.client.get_request_token", lambda: secret)
+    monkeypatch.setattr(mod, "_lookup_me_username", lambda token=None: "alice")
+
+    @mod.instrument_tool
+    def my_tool():
+        return "ok"
+
+    my_tool()
+
+    text = log_file.read_text()
+    assert secret not in text  # neither raw token
+    import hashlib
+
+    assert hashlib.sha256(secret.encode()).hexdigest()[:16] not in text  # nor its hash
+    entry = json.loads(_read_lines(log_file)[-1])
+    assert entry["user"] == "alice"
+    assert entry["auth_mode"] == "passthrough"
+
+
+# ---------------------------------------------------------------------------
+# proxy local recorder: transport="proxy", supplied user/awx_host, no server import
+# ---------------------------------------------------------------------------
+
+
+def test_record_proxy_tool_call_writes_proxy_record(monkeypatch, tmp_path):
+    log_file = tmp_path / "u.jsonl"
+    mod = _reload_usage(monkeypatch, AWX_MCP_USAGE_LOG_FILE=str(log_file))
+
+    import time as _time
+
+    mod.record_proxy_tool_call(
+        "list_inventories",
+        _time.monotonic(),
+        True,
+        None,
+        user="argon",
+        awx_host="central.example.com",
+    )
+
+    entry = json.loads(_read_lines(log_file)[-1])
+    assert entry["tool"] == "list_inventories"
+    assert entry["transport"] == "proxy"
+    assert entry["user"] == "argon"
+    assert entry["awx_host"] == "central.example.com"
+    assert entry["success"] is True
 
 
 def test_server_log_file_unset_creates_no_file(tmp_path):

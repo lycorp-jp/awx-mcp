@@ -1,10 +1,17 @@
 # SPDX-License-Identifier: Apache-2.0
 
-"""Smoke-test the AWX MCP server across all three transports.
+"""Smoke-test the AWX MCP server across its running modes.
 
-For each transport (stdio, streamable-http, sse) this script starts the server,
-connects to it as an MCP client, lists the registered tools, and calls the
-read-only ``get_ansible_version`` tool to verify the full round trip.
+Modes:
+  local   local stdio server (static auth from env)
+  serve   central server (streamable-http, passthrough auth via a caller token)
+  sse     central server (sse transport, passthrough)
+  remote  client proxy (stdio) relaying to a central serve instance
+
+Each mode starts the server(s), connects as an MCP client, lists tools, and
+calls the read-only ``get_ansible_version`` tool to verify the round trip. In
+the passthrough modes the caller's token is sent as an ``Authorization: Bearer``
+header (streamable-http/sse) or forwarded by the proxy from ``ANSIBLE_TOKEN``.
 
 Connection settings are read from the environment — the token is NEVER written
 to this file. Set ANSIBLE_BASE_URL and ANSIBLE_TOKEN (or ANSIBLE_USERNAME /
@@ -14,9 +21,9 @@ Usage:
     ANSIBLE_BASE_URL=https://awx.example.com/ \\
     ANSIBLE_TOKEN=xxxxx \\
     ANSIBLE_SSL_VERIFY=false \\
-    uv run python scripts/mcp_smoke_test.py [stdio|http|sse|all]
+    uv run python scripts/mcp_smoke_test.py [local|serve|sse|remote|all]
 
-Exit code 0 = all selected transports passed, 1 = at least one failed.
+Exit code 0 = all selected modes passed, 1 = at least one failed.
 """
 
 from __future__ import annotations
@@ -30,10 +37,11 @@ import subprocess
 import sys
 import time
 
+import httpx
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.sse import sse_client
 from mcp.client.stdio import stdio_client
-from mcp.client.streamable_http import streamablehttp_client
+from mcp.client.streamable_http import streamable_http_client
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 HOST = "127.0.0.1"
@@ -81,7 +89,7 @@ def _server_env() -> dict[str, str]:
     return os.environ.copy()
 
 
-async def test_stdio() -> tuple[int, str]:
+async def test_local() -> tuple[int, str]:
     params = StdioServerParameters(
         command="uv",
         args=["run", "--directory", REPO, "awx-mcp"],
@@ -91,18 +99,10 @@ async def test_stdio() -> tuple[int, str]:
         return await _drive(read, write)
 
 
-def _spawn_http(transport: str, port: int) -> subprocess.Popen:
-    cmd = [
-        "uv",
-        "run",
-        "awx-mcp",
-        "--transport",
-        transport,
-        "--host",
-        HOST,
-        "--port",
-        str(port),
-    ]
+def _spawn_serve(port: int, sse: bool) -> subprocess.Popen:
+    cmd = ["uv", "run", "awx-mcp", "--serve", "--host", HOST, "--port", str(port)]
+    if sse:
+        cmd.append("--sse")
     return subprocess.Popen(
         cmd,
         cwd=REPO,
@@ -112,14 +112,20 @@ def _spawn_http(transport: str, port: int) -> subprocess.Popen:
     )
 
 
-async def test_streamable_http() -> tuple[int, str]:
+def _caller_headers() -> dict[str, str]:
+    token = os.environ.get("ANSIBLE_TOKEN", "")
+    return {"Authorization": f"Bearer {token}"} if token else {}
+
+
+async def test_serve() -> tuple[int, str]:
     port = _free_port()
-    proc = _spawn_http("streamable-http", port)
+    proc = _spawn_serve(port, sse=False)
     try:
         _wait_port(port)
         url = f"http://{HOST}:{port}/mcp"
-        async with streamablehttp_client(url) as (read, write, _):
-            return await _drive(read, write)
+        async with httpx.AsyncClient(headers=_caller_headers()) as hc:
+            async with streamable_http_client(url, http_client=hc) as (read, write, _):
+                return await _drive(read, write)
     finally:
         proc.terminate()
         with contextlib.suppress(subprocess.TimeoutExpired):
@@ -128,11 +134,11 @@ async def test_streamable_http() -> tuple[int, str]:
 
 async def test_sse() -> tuple[int, str]:
     port = _free_port()
-    proc = _spawn_http("sse", port)
+    proc = _spawn_serve(port, sse=True)
     try:
         _wait_port(port)
         url = f"http://{HOST}:{port}/sse"
-        async with sse_client(url) as (read, write):
+        async with sse_client(url, headers=_caller_headers()) as (read, write):
             return await _drive(read, write)
     finally:
         proc.terminate()
@@ -140,10 +146,34 @@ async def test_sse() -> tuple[int, str]:
             proc.wait(5)
 
 
-TRANSPORTS = {
-    "stdio": test_stdio,
-    "http": test_streamable_http,
+async def test_remote() -> tuple[int, str]:
+    """Proxy mode: stdio proxy -> central streamable-http serve."""
+    port = _free_port()
+    central = _spawn_serve(port, sse=False)
+    try:
+        _wait_port(port)
+        url = f"http://{HOST}:{port}/mcp"
+        env = _server_env()
+        env["AWX_MCP_REMOTE_URL"] = url
+        env.pop("ANSIBLE_BASE_URL", None)  # proxy needs none
+        params = StdioServerParameters(
+            command="uv",
+            args=["run", "--directory", REPO, "awx-mcp", "--remote", url],
+            env=env,
+        )
+        async with stdio_client(params) as (read, write):
+            return await _drive(read, write)
+    finally:
+        central.terminate()
+        with contextlib.suppress(subprocess.TimeoutExpired):
+            central.wait(5)
+
+
+MODES = {
+    "local": test_local,
+    "serve": test_serve,
     "sse": test_sse,
+    "remote": test_remote,
 }
 
 
@@ -211,23 +241,22 @@ async def main() -> int:
     which = (sys.argv[1] if len(sys.argv) > 1 else "all").lower()
     if which == "exercise":
         return await exercise()
-    selected = list(TRANSPORTS) if which == "all" else [which]
-    if any(t not in TRANSPORTS for t in selected):
-        sys.exit(f"Unknown transport {which!r}. Choose: stdio, http, sse, all.")
+    selected = list(MODES) if which == "all" else [which]
+    if any(m not in MODES for m in selected):
+        sys.exit(f"Unknown mode {which!r}. Choose: local, serve, sse, remote, all.")
 
     failures = 0
     for name in selected:
-        label = {"http": "streamable-http", "sse": "sse", "stdio": "stdio"}[name]
         try:
-            count, version = await TRANSPORTS[name]()
-            print(f"[PASS] {label:16} tools={count} {PROBE_TOOL} -> {version[:80]}")
+            count, version = await MODES[name]()
+            print(f"[PASS] {name:16} tools={count} {PROBE_TOOL} -> {version[:80]}")
         except Exception as exc:  # noqa: BLE001 - smoke test reports all failures
             failures += 1
-            print(f"[FAIL] {label:16} {type(exc).__name__}: {exc}")
+            print(f"[FAIL] {name:16} {type(exc).__name__}: {exc}")
 
     print(
         f"\n{'OK' if not failures else 'FAILED'}: "
-        f"{len(selected) - failures}/{len(selected)} transports passed"
+        f"{len(selected) - failures}/{len(selected)} modes passed"
     )
     return 1 if failures else 0
 
