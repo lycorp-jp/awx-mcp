@@ -45,7 +45,11 @@ def test_activity_stream_object_type_and_id_uses_resource_subendpoint():
     # No broken object1__* lookups in the query params.
     sent_params = api.request.call_args.kwargs.get("params") or {}
     assert not any(k.startswith("object1__") for k in sent_params)
-    assert json.loads(out) == [{"id": 1}]
+    data = json.loads(out)
+    assert data["results"] == [{"id": 1}]
+    assert data["count"] == 1
+    assert data["returned"] == 1
+    assert data["offset"] == 0
 
 
 def test_activity_stream_inventory_pluralizes_collection_path():
@@ -142,7 +146,10 @@ def test_list_instances_returns_primary_when_present():
     ):
         out = json.loads(instances_mod.list_instances())
 
-    assert out == rows
+    assert out["results"] == rows
+    assert out["count"] == 1
+    assert out["returned"] == 1
+    assert out["offset"] == 0
     # ping must NOT be consulted when the primary collection has rows.
     assert all(c.args[1] != "/api/v2/ping/" for c in api.request.call_args_list)
 
@@ -170,4 +177,7 @@ def test_list_instance_groups_returns_primary_when_present():
     ):
         out = json.loads(instances_mod.list_instance_groups())
 
-    assert out == rows
+    assert out["results"] == rows
+    assert out["count"] == 1
+    assert out["returned"] == 1
+    assert out["offset"] == 0

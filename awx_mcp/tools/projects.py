@@ -19,12 +19,16 @@ from ..server import read_tool, write_tool
 
 
 @read_tool
-def list_projects(limit: int = 100, offset: int = 0) -> str:
+def list_projects(limit: int = 20, offset: int = 0) -> str:
     """List AWX projects.
 
     Returns SCM project records that supply playbooks for job templates and
     workflows. Use returned project_id values with sync_project,
     list_project_playbooks, and create_job_template.
+
+    Returns a JSON envelope {count, returned, offset, results}. count is the
+    server-side total; if offset + returned < count, call again with
+    offset=offset+returned to page through.
 
     Args:
         limit: Maximum number of results to return
@@ -32,8 +36,10 @@ def list_projects(limit: int = 100, offset: int = 0) -> str:
     """
     with get_ansible_client() as client:
         params = {"limit": limit, "offset": offset}
-        projects = handle_pagination(client, "/api/v2/projects/", params)
-        return json.dumps(projects, indent=2)
+        envelope = handle_pagination(
+            client, "/api/v2/projects/", params, with_meta=True
+        )
+        return json.dumps(envelope, indent=2)
 
 
 @read_tool
@@ -223,7 +229,7 @@ def list_project_playbooks(project_id: int) -> str:
 
 @read_tool
 def list_project_updates(
-    project_id: int, limit: int = 100, offset: int = 0, order_by: str = "-created"
+    project_id: int, limit: int = 20, offset: int = 0, order_by: str = "-created"
 ) -> str:
     """List AWX project SCM sync history.
 
@@ -234,6 +240,10 @@ def list_project_updates(
     inventory source host-discovery sync history, use list_inventory_updates
     instead.
 
+    Returns a JSON envelope {count, returned, offset, results}. count is the
+    server-side total; if offset + returned < count, call again with
+    offset=offset+returned to page through.
+
     Args:
         project_id: ID of the project (from list_projects response)
         limit: Maximum number of results to return
@@ -243,10 +253,13 @@ def list_project_updates(
     """
     with get_ansible_client() as client:
         params = {"limit": limit, "offset": offset, "order_by": order_by}
-        updates = handle_pagination(
-            client, f"/api/v2/projects/{project_id}/project_updates/", params
+        envelope = handle_pagination(
+            client,
+            f"/api/v2/projects/{project_id}/project_updates/",
+            params,
+            with_meta=True,
         )
-        return json.dumps(updates, indent=2)
+        return json.dumps(envelope, indent=2)
 
 
 @read_tool

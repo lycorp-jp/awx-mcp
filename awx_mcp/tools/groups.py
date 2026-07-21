@@ -12,12 +12,16 @@ from ..utils import validate_json_str
 
 
 @read_tool
-def list_groups(inventory_id: int = None, limit: int = 100, offset: int = 0) -> str:
+def list_groups(inventory_id: int = None, limit: int = 20, offset: int = 0) -> str:
     """List AWX inventory groups.
 
     Returns logical host groupings within inventories and their group IDs for
     membership operations. For individual machine records, use list_hosts
     instead.
+
+    Returns a JSON envelope {count, returned, offset, results}. count is the
+    server-side total; if offset + returned < count, call again with
+    offset=offset+returned to page through.
 
     Args:
         inventory_id: Optional ID of inventory to filter groups
@@ -31,7 +35,7 @@ def list_groups(inventory_id: int = None, limit: int = 100, offset: int = 0) -> 
             endpoint = f"/api/v2/inventories/{inventory_id}/groups/"
         else:
             endpoint = "/api/v2/groups/"
-        groups = handle_pagination(client, endpoint, params)
+        groups = handle_pagination(client, endpoint, params, with_meta=True)
         return json.dumps(groups, indent=2)
 
 

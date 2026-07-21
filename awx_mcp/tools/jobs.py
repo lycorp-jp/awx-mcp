@@ -20,7 +20,7 @@ from ..server import read_tool, write_tool
 @read_tool
 def list_jobs(
     status: str = None,
-    limit: int = 100,
+    limit: int = 20,
     offset: int = 0,
     order_by: str = "-created",
 ) -> str:
@@ -33,6 +33,10 @@ def list_jobs(
     Use this for single playbook executions launched from job templates.
     For multi-step orchestration runs, use list_workflow_jobs instead.
     For AWX maintenance runs, use list_system_jobs instead.
+
+    Returns a JSON envelope {count, returned, offset, results}. count is the
+    server-side total; if offset + returned < count, call again with
+    offset=offset+returned to page through.
 
     Args:
         status: Filter by job status
@@ -51,7 +55,7 @@ def list_jobs(
         if status is not None:
             params["status"] = status
 
-        jobs = handle_pagination(client, "/api/v2/jobs/", params)
+        jobs = handle_pagination(client, "/api/v2/jobs/", params, with_meta=True)
         return json.dumps(jobs, indent=2)
 
 
@@ -106,12 +110,16 @@ def relaunch_job(job_id: int) -> str:
 
 
 @read_tool
-def get_job_events(job_id: int, limit: int = 100, offset: int = 0) -> str:
+def get_job_events(job_id: int, limit: int = 20, offset: int = 0) -> str:
     """Get event stream records for a specific AWX regular job.
 
     Use this for task-level execution history when status alone is not enough.
     Pair with get_job_stdout for readable logs and get_job_host_summaries for
     per-host rollups.
+
+    Returns a JSON envelope {count, returned, offset, results}. count is the
+    server-side total; if offset + returned < count, call again with
+    offset=offset+returned to page through.
 
     Args:
         job_id: ID of the job (from list_jobs or launch_job response)
@@ -120,7 +128,9 @@ def get_job_events(job_id: int, limit: int = 100, offset: int = 0) -> str:
     """
     with get_ansible_client() as client:
         params: dict[str, Any] = {"limit": limit, "offset": offset}
-        events = handle_pagination(client, f"/api/v2/jobs/{job_id}/job_events/", params)
+        events = handle_pagination(
+            client, f"/api/v2/jobs/{job_id}/job_events/", params, with_meta=True
+        )
         return json.dumps(events, indent=2)
 
 
@@ -172,11 +182,15 @@ def get_job_stdout(job_id: int, format: str = "txt") -> str:
 
 
 @read_tool
-def get_job_host_summaries(job_id: int, limit: int = 100, offset: int = 0) -> str:
+def get_job_host_summaries(job_id: int, limit: int = 20, offset: int = 0) -> str:
     """Get AWX per-host result summaries for a regular playbook job.
 
     Use this to quickly identify which hosts succeeded, changed, or failed in one run.
     Pair with get_job_events for task-level detail and get_job_stdout for full logs.
+
+    Returns a JSON envelope {count, returned, offset, results}. count is the
+    server-side total; if offset + returned < count, call again with
+    offset=offset+returned to page through.
 
     Args:
         job_id: ID of the job (from list_jobs or launch_job response)
@@ -186,6 +200,9 @@ def get_job_host_summaries(job_id: int, limit: int = 100, offset: int = 0) -> st
     with get_ansible_client() as client:
         params: dict[str, Any] = {"limit": limit, "offset": offset}
         summaries = handle_pagination(
-            client, f"/api/v2/jobs/{job_id}/job_host_summaries/", params
+            client,
+            f"/api/v2/jobs/{job_id}/job_host_summaries/",
+            params,
+            with_meta=True,
         )
         return json.dumps(summaries, indent=2)

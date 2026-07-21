@@ -40,7 +40,10 @@ def test_list_organizations_sends_limit_offset():
     ):
         out = json.loads(organizations_mod.list_organizations(limit=10, offset=0))
 
-    assert out == [{"id": 1, "name": "Default"}]
+    assert out["results"] == [{"id": 1, "name": "Default"}]
+    assert out["count"] == 1
+    assert out["returned"] == 1
+    assert out["offset"] == 0
     endpoint = api.request.call_args.args[1]
     assert endpoint == "/api/v2/organizations/"
 
@@ -160,7 +163,10 @@ def test_list_teams_without_organization_hits_global_endpoint():
     with patch.object(teams_mod, "get_ansible_client", new=fake_client_factory(api)):
         out = json.loads(teams_mod.list_teams())
 
-    assert out == [{"id": 1, "name": "Team1"}]
+    assert out["results"] == [{"id": 1, "name": "Team1"}]
+    assert out["count"] == 1
+    assert out["returned"] == 1
+    assert out["offset"] == 0
     assert api.request.call_args.args[1] == "/api/v2/teams/"
 
 
@@ -236,7 +242,10 @@ def test_list_roles_paginates_global_endpoint():
     with patch.object(rbac_mod, "get_ansible_client", new=fake_client_factory(api)):
         out = json.loads(rbac_mod.list_roles(limit=20, offset=0))
 
-    assert out == [{"id": 1, "name": "Admin"}]
+    assert out["results"] == [{"id": 1, "name": "Admin"}]
+    assert out["count"] == 1
+    assert out["returned"] == 1
+    assert out["offset"] == 0
     assert api.request.call_args.args[1] == "/api/v2/roles/"
 
 
@@ -326,7 +335,10 @@ def test_list_object_roles_valid_type_hits_scoped_endpoint():
             rbac_mod.list_object_roles(resource_type="inventories", resource_id=42)
         )
 
-    assert out == [{"id": 1, "name": "Admin"}]
+    assert out["results"] == [{"id": 1, "name": "Admin"}]
+    assert out["count"] == 1
+    assert out["returned"] == 1
+    assert out["offset"] == 0
     assert api.request.call_args.args[1] == "/api/v2/inventories/42/object_roles/"
 
 
@@ -358,7 +370,10 @@ def test_list_notification_templates_paginates():
     ):
         out = json.loads(notifications_mod.list_notification_templates())
 
-    assert out == [{"id": 1, "name": "Slack"}]
+    assert out["results"] == [{"id": 1, "name": "Slack"}]
+    assert out["count"] == 1
+    assert out["returned"] == 1
+    assert out["offset"] == 0
     assert api.request.call_args.args[1] == "/api/v2/notification_templates/"
 
 
@@ -404,7 +419,10 @@ def test_list_workflow_jobs_without_status_omits_filter():
     ):
         out = json.loads(workflow_jobs_mod.list_workflow_jobs())
 
-    assert out == [{"id": 1, "status": "successful"}]
+    assert out["results"] == [{"id": 1, "status": "successful"}]
+    assert out["count"] == 1
+    assert out["returned"] == 1
+    assert out["offset"] == 0
     assert api.request.call_args.args[1] == "/api/v2/workflow_jobs/"
     sent_params = api.request.call_args.kwargs.get("params") or {}
     assert "status" not in sent_params
@@ -445,7 +463,10 @@ def test_list_workflow_job_nodes_scopes_to_job():
     ):
         out = json.loads(workflow_jobs_mod.list_workflow_job_nodes(job_id=9))
 
-    assert out == [{"id": 1, "job": 9}]
+    assert out["results"] == [{"id": 1, "job": 9}]
+    assert out["count"] == 1
+    assert out["returned"] == 1
+    assert out["offset"] == 0
     assert api.request.call_args.args[1] == "/api/v2/workflow_jobs/9/workflow_nodes/"
 
 
@@ -458,7 +479,10 @@ def test_list_workflow_approvals_without_status_omits_filter():
     ):
         out = json.loads(workflow_jobs_mod.list_workflow_approvals())
 
-    assert out == [{"id": 1, "status": "pending"}]
+    assert out["results"] == [{"id": 1, "status": "pending"}]
+    assert out["count"] == 1
+    assert out["returned"] == 1
+    assert out["offset"] == 0
     assert api.request.call_args.args[1] == "/api/v2/workflow_approvals/"
     sent_params = api.request.call_args.kwargs.get("params") or {}
     assert "status" not in sent_params

@@ -39,8 +39,11 @@ def test_list_hosts_global_endpoint_and_page_size():
         out = json.loads(hosts_mod.list_hosts())
 
     assert api.request.call_args.args == ("GET", "/api/v2/hosts/")
-    assert api.request.call_args.kwargs["params"] == {"page_size": 100}
-    assert out == [{"id": 1, "name": "h1"}]
+    assert api.request.call_args.kwargs["params"] == {"page_size": 20}
+    assert out["results"] == [{"id": 1, "name": "h1"}]
+    assert out["count"] == 1
+    assert out["returned"] == 1
+    assert out["offset"] == 0
 
 
 def test_list_hosts_scoped_to_inventory():
@@ -163,8 +166,11 @@ def test_list_groups_global_endpoint():
         out = json.loads(groups_mod.list_groups())
 
     assert api.request.call_args.args == ("GET", "/api/v2/groups/")
-    assert api.request.call_args.kwargs["params"] == {"page_size": 100}
-    assert out == [{"id": 1, "name": "g1"}]
+    assert api.request.call_args.kwargs["params"] == {"page_size": 20}
+    assert out["results"] == [{"id": 1, "name": "g1"}]
+    assert out["count"] == 1
+    assert out["returned"] == 1
+    assert out["offset"] == 0
 
 
 def test_list_groups_scoped_to_inventory():
@@ -303,8 +309,11 @@ def test_list_schedules_no_filter():
         out = json.loads(schedules_mod.list_schedules())
 
     assert api.request.call_args.args == ("GET", "/api/v2/schedules/")
-    assert api.request.call_args.kwargs["params"] == {"page_size": 100}
-    assert out == [{"id": 1}]
+    assert api.request.call_args.kwargs["params"] == {"page_size": 20}
+    assert out["results"] == [{"id": 1}]
+    assert out["count"] == 1
+    assert out["returned"] == 1
+    assert out["offset"] == 0
 
 
 def test_list_schedules_filtered_by_template():
@@ -318,7 +327,7 @@ def test_list_schedules_filtered_by_template():
 
     assert api.request.call_args.kwargs["params"] == {
         "unified_job_template": 42,
-        "page_size": 100,
+        "page_size": 20,
     }
 
 
@@ -441,8 +450,11 @@ def test_list_execution_environments():
         out = json.loads(ee_mod.list_execution_environments())
 
     assert api.request.call_args.args == ("GET", "/api/v2/execution_environments/")
-    assert api.request.call_args.kwargs["params"] == {"page_size": 100}
-    assert out == [{"id": 1, "name": "ee1"}]
+    assert api.request.call_args.kwargs["params"] == {"page_size": 20}
+    assert out["results"] == [{"id": 1, "name": "ee1"}]
+    assert out["count"] == 1
+    assert out["returned"] == 1
+    assert out["offset"] == 0
 
 
 def test_get_execution_environment():
@@ -542,8 +554,11 @@ def test_list_labels():
         out = json.loads(labels_mod.list_labels())
 
     assert api.request.call_args.args == ("GET", "/api/v2/labels/")
-    assert api.request.call_args.kwargs["params"] == {"page_size": 100}
-    assert out == [{"id": 1, "name": "prod"}]
+    assert api.request.call_args.kwargs["params"] == {"page_size": 20}
+    assert out["results"] == [{"id": 1, "name": "prod"}]
+    assert out["count"] == 1
+    assert out["returned"] == 1
+    assert out["offset"] == 0
 
 
 def test_create_label():

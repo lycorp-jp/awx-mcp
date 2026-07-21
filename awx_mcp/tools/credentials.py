@@ -19,7 +19,7 @@ class CredentialInputs(BaseModel):
 
 
 @read_tool
-def list_credentials(limit: int = 100, offset: int = 0) -> str:
+def list_credentials(limit: int = 20, offset: int = 0) -> str:
     """List AWX credentials.
 
     Returns credential IDs, types, and ownership context used by projects,
@@ -27,13 +27,19 @@ def list_credentials(limit: int = 100, offset: int = 0) -> str:
     credential_id values with get_credential, create_project, and
     create_inventory_source.
 
+    Returns a JSON envelope {count, returned, offset, results}. count is the
+    server-side total; if offset + returned < count, call again with
+    offset=offset+returned to page through.
+
     Args:
         limit: Maximum number of results to return
         offset: Number of results to skip
     """
     with get_ansible_client() as client:
         params = {"limit": limit, "offset": offset}
-        credentials = handle_pagination(client, "/api/v2/credentials/", params)
+        credentials = handle_pagination(
+            client, "/api/v2/credentials/", params, with_meta=True
+        )
         return json.dumps(credentials, indent=2)
 
 
@@ -54,11 +60,15 @@ def get_credential(credential_id: int) -> str:
 
 
 @read_tool
-def list_credential_types(limit: int = 100, offset: int = 0) -> str:
+def list_credential_types(limit: int = 20, offset: int = 0) -> str:
     """List AWX credential types.
 
     Returns available credential schemas such as machine, SCM, cloud, and
     vault types. Use returned credential_type_id values with create_credential.
+
+    Returns a JSON envelope {count, returned, offset, results}. count is the
+    server-side total; if offset + returned < count, call again with
+    offset=offset+returned to page through.
 
     Args:
         limit: Maximum number of results to return
@@ -67,7 +77,7 @@ def list_credential_types(limit: int = 100, offset: int = 0) -> str:
     with get_ansible_client() as client:
         params = {"limit": limit, "offset": offset}
         credential_types = handle_pagination(
-            client, "/api/v2/credential_types/", params
+            client, "/api/v2/credential_types/", params, with_meta=True
         )
         return json.dumps(credential_types, indent=2)
 

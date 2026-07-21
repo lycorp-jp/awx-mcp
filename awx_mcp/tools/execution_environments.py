@@ -12,12 +12,16 @@ from ..server import read_tool, write_tool
 
 
 @read_tool
-def list_execution_environments(limit: int = 100, offset: int = 0) -> str:
+def list_execution_environments(limit: int = 20, offset: int = 0) -> str:
     """List AWX execution environments.
 
     Use this to discover containerized runtimes available for job execution.
     Returns execution environment IDs and image metadata for chaining into
     get_execution_environment, update_execution_environment, or templates.
+
+    Returns a JSON envelope {count, returned, offset, results}. count is the
+    server-side total; if offset + returned < count, call again with
+    offset=offset+returned to page through.
 
     Args:
         limit: Maximum number of execution environment results to return
@@ -25,7 +29,9 @@ def list_execution_environments(limit: int = 100, offset: int = 0) -> str:
     """
     with get_ansible_client() as client:
         params = {"limit": limit, "offset": offset}
-        envs = handle_pagination(client, "/api/v2/execution_environments/", params)
+        envs = handle_pagination(
+            client, "/api/v2/execution_environments/", params, with_meta=True
+        )
         return json.dumps(envs, indent=2)
 
 

@@ -11,12 +11,16 @@ from ..server import read_tool, write_tool
 
 
 @read_tool
-def list_teams(organization_id: int = None, limit: int = 100, offset: int = 0) -> str:
+def list_teams(organization_id: int = None, limit: int = 20, offset: int = 0) -> str:
     """List AWX teams, optionally scoped to an organization.
 
     Use this to enumerate teams under the organizations -> teams -> users
     hierarchy before assigning RBAC roles. Returns team IDs for get_team,
     update_team, delete_team, and grant_role_to_team.
+
+    Returns a JSON envelope {count, returned, offset, results}. count is the
+    server-side total; if offset + returned < count, call again with
+    offset=offset+returned to page through.
 
     Args:
         organization_id: Optional organization ID to filter teams
@@ -32,8 +36,8 @@ def list_teams(organization_id: int = None, limit: int = 100, offset: int = 0) -
         else:
             endpoint = "/api/v2/teams/"
 
-        teams = handle_pagination(client, endpoint, params)
-        return json.dumps(teams, indent=2)
+        envelope = handle_pagination(client, endpoint, params, with_meta=True)
+        return json.dumps(envelope, indent=2)
 
 
 @read_tool

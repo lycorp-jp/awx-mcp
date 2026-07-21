@@ -19,12 +19,16 @@ from ..utils import validate_json_str
 
 
 @read_tool
-def list_inventories(limit: int = 100, offset: int = 0) -> str:
+def list_inventories(limit: int = 20, offset: int = 0) -> str:
     """List AWX inventories.
 
     Returns inventory IDs, names, and organization links for the top-level
     host/group container in AWX. Use returned inventory_id values with
     get_inventory, list_hosts, list_groups, and create_job_template.
+
+    Returns a JSON envelope {count, returned, offset, results}. count is the
+    server-side total; if offset + returned < count, call again with
+    offset=offset+returned to page through.
 
     Args:
         limit: Maximum number of results to return
@@ -32,7 +36,9 @@ def list_inventories(limit: int = 100, offset: int = 0) -> str:
     """
     with get_ansible_client() as client:
         params = {"limit": limit, "offset": offset}
-        inventories = handle_pagination(client, "/api/v2/inventories/", params)
+        inventories = handle_pagination(
+            client, "/api/v2/inventories/", params, with_meta=True
+        )
         return json.dumps(inventories, indent=2)
 
 
@@ -147,13 +153,17 @@ def delete_inventory(inventory_id: int) -> str:
 
 @read_tool
 def list_inventory_sources(
-    inventory_id: int = None, limit: int = 100, offset: int = 0
+    inventory_id: int = None, limit: int = 20, offset: int = 0
 ) -> str:
     """List AWX inventory sources.
 
     Use this to inspect dynamic host sync configurations (EC2, GCE, SCM, and
     similar) attached to inventories. For inventory containers themselves, use
     list_inventories instead.
+
+    Returns a JSON envelope {count, returned, offset, results}. count is the
+    server-side total; if offset + returned < count, call again with
+    offset=offset+returned to page through.
 
     Args:
         inventory_id: Optional ID of inventory to filter sources
@@ -167,7 +177,7 @@ def list_inventory_sources(
             endpoint = f"/api/v2/inventories/{inventory_id}/inventory_sources/"
         else:
             endpoint = "/api/v2/inventory_sources/"
-        sources = handle_pagination(client, endpoint, params)
+        sources = handle_pagination(client, endpoint, params, with_meta=True)
         return json.dumps(sources, indent=2)
 
 
@@ -352,7 +362,7 @@ def delete_inventory_source(source_id: int) -> str:
 
 @read_tool
 def list_inventory_updates(
-    source_id: int, limit: int = 100, offset: int = 0, order_by: str = "-created"
+    source_id: int, limit: int = 20, offset: int = 0, order_by: str = "-created"
 ) -> str:
     """List AWX inventory source sync history.
 
@@ -362,6 +372,10 @@ def list_inventory_updates(
     Returns update records for host/group discovery runs tied to an inventory
     source. For SCM repository sync history, use list_project_updates instead.
     Use returned update_id values with get_inventory_update.
+
+    Returns a JSON envelope {count, returned, offset, results}. count is the
+    server-side total; if offset + returned < count, call again with
+    offset=offset+returned to page through.
 
     Args:
         source_id: ID of the inventory source (from list_inventory_sources response)
@@ -373,7 +387,10 @@ def list_inventory_updates(
     with get_ansible_client() as client:
         params = {"limit": limit, "offset": offset, "order_by": order_by}
         updates = handle_pagination(
-            client, f"/api/v2/inventory_sources/{source_id}/inventory_updates/", params
+            client,
+            f"/api/v2/inventory_sources/{source_id}/inventory_updates/",
+            params,
+            with_meta=True,
         )
         return json.dumps(updates, indent=2)
 

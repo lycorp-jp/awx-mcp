@@ -20,7 +20,7 @@ from ..server import read_tool, write_tool
 @read_tool
 def list_workflow_jobs(
     status: str = None,
-    limit: int = 100,
+    limit: int = 20,
     offset: int = 0,
     order_by: str = "-created",
 ) -> str:
@@ -32,6 +32,10 @@ def list_workflow_jobs(
     Use this for multi-step executions launched from workflow templates.
     For single playbook runs, use list_jobs instead.
     For AWX maintenance executions, use list_system_jobs instead.
+
+    Returns a JSON envelope {count, returned, offset, results}. count is the
+    server-side total; if offset + returned < count, call again with
+    offset=offset+returned to page through.
 
     Args:
         status: Filter by job status
@@ -50,8 +54,10 @@ def list_workflow_jobs(
         if status is not None:
             params["status"] = status
 
-        jobs = handle_pagination(client, "/api/v2/workflow_jobs/", params)
-        return json.dumps(jobs, indent=2)
+        envelope = handle_pagination(
+            client, "/api/v2/workflow_jobs/", params, with_meta=True
+        )
+        return json.dumps(envelope, indent=2)
 
 
 @read_tool
@@ -110,13 +116,17 @@ def relaunch_workflow_job(job_id: int) -> str:
 
 
 @read_tool
-def list_workflow_job_nodes(job_id: int, limit: int = 100, offset: int = 0) -> str:
+def list_workflow_job_nodes(job_id: int, limit: int = 20, offset: int = 0) -> str:
     """List node outcomes for an executed AWX workflow job.
 
     Use this to inspect which workflow nodes ran, failed, or were skipped in
     a specific run.
     Pair with get_workflow_job for overall status and list_workflow_approvals
     for pending approvals.
+
+    Returns a JSON envelope {count, returned, offset, results}. count is the
+    server-side total; if offset + returned < count, call again with
+    offset=offset+returned to page through.
 
     Args:
         job_id: ID of the workflow job
@@ -126,10 +136,13 @@ def list_workflow_job_nodes(job_id: int, limit: int = 100, offset: int = 0) -> s
     """
     with get_ansible_client() as client:
         params: dict[str, Any] = {"limit": limit, "offset": offset}
-        nodes = handle_pagination(
-            client, f"/api/v2/workflow_jobs/{job_id}/workflow_nodes/", params
+        envelope = handle_pagination(
+            client,
+            f"/api/v2/workflow_jobs/{job_id}/workflow_nodes/",
+            params,
+            with_meta=True,
         )
-        return json.dumps(nodes, indent=2)
+        return json.dumps(envelope, indent=2)
 
 
 # =============================================================================
@@ -139,13 +152,17 @@ def list_workflow_job_nodes(job_id: int, limit: int = 100, offset: int = 0) -> s
 
 @read_tool
 def list_workflow_approvals(
-    status: str = None, limit: int = 100, offset: int = 0
+    status: str = None, limit: int = 20, offset: int = 0
 ) -> str:
     """List AWX workflow approval requests, optionally filtered by status.
 
     Use this to find pending manual approval gates created by workflow approval nodes.
     Returns approval_id values for follow-up with get_workflow_approval,
     approve_workflow, or deny_workflow.
+
+    Returns a JSON envelope {count, returned, offset, results}. count is the
+    server-side total; if offset + returned < count, call again with
+    offset=offset+returned to page through.
 
     Args:
         status: Filter by status (pending, successful, failed)
@@ -156,8 +173,10 @@ def list_workflow_approvals(
         params: dict[str, Any] = {"limit": limit, "offset": offset}
         if status is not None:
             params["status"] = status
-        approvals = handle_pagination(client, "/api/v2/workflow_approvals/", params)
-        return json.dumps(approvals, indent=2)
+        envelope = handle_pagination(
+            client, "/api/v2/workflow_approvals/", params, with_meta=True
+        )
+        return json.dumps(envelope, indent=2)
 
 
 @read_tool
@@ -221,7 +240,7 @@ def deny_workflow(approval_id: int) -> str:
 
 @read_tool
 def list_workflow_approval_templates(
-    workflow_template_id: int = None, limit: int = 100, offset: int = 0
+    workflow_template_id: int = None, limit: int = 20, offset: int = 0
 ) -> str:
     """List AWX workflow approval template nodes.
 
@@ -231,6 +250,12 @@ def list_workflow_approval_templates(
     launch_workflow.
     For runtime approval requests in active executions, use
     list_workflow_approvals instead.
+
+    Returns a JSON envelope {count, returned, offset, results}. count is the
+    total number of approval nodes found (already an exact count, since the
+    full node set is fetched and filtered before offset/limit is applied); if
+    offset + returned < count, call again with offset=offset+returned to page
+    through.
 
     Args:
         workflow_template_id: Optional workflow job template ID to filter nodes
@@ -273,7 +298,15 @@ def list_workflow_approval_templates(
             if limit
             else approval_nodes[offset:]
         )
-        return json.dumps(window, indent=2)
+        # count is exact (not a server-reported total) because approval_nodes
+        # is already the complete filtered collection at this point.
+        envelope = {
+            "count": len(approval_nodes),
+            "returned": len(window),
+            "offset": offset,
+            "results": window,
+        }
+        return json.dumps(envelope, indent=2)
 
 
 @read_tool

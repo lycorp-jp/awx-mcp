@@ -45,7 +45,7 @@ _ACTIVITY_STREAM_PATHS = {
 
 @read_tool
 def list_activity_stream(
-    limit: int = 100, offset: int = 0, object_type: str = None, object_id: int = None
+    limit: int = 20, offset: int = 0, object_type: str = None, object_id: int = None
 ) -> str:
     """List AWX activity stream audit entries.
 
@@ -58,6 +58,10 @@ def list_activity_stream(
           /api/v2/<collection>/<id>/activity_stream/ (precise, recommended).
         - object_type only: filters the global stream by object1 model name.
         - neither: returns the unfiltered global stream.
+
+    Returns a JSON envelope {count, returned, offset, results}. count is the
+    server-side total; if offset + returned < count, call again with
+    offset=offset+returned to page through.
 
     Args:
         limit: Maximum number of results to return
@@ -74,8 +78,8 @@ def list_activity_stream(
             collection = _ACTIVITY_STREAM_PATHS.get(object_type)
             if collection is not None:
                 endpoint = f"/api/v2/{collection}/{object_id}/activity_stream/"
-                activities = handle_pagination(client, endpoint, params)
-                return json.dumps(activities, indent=2)
+                envelope = handle_pagination(client, endpoint, params, with_meta=True)
+                return json.dumps(envelope, indent=2)
             # Unknown type: fall back to a best-effort global filter by type.
             params["object1"] = object_type
 
@@ -83,8 +87,10 @@ def list_activity_stream(
         elif object_type is not None:
             params["object1"] = object_type
 
-        activities = handle_pagination(client, "/api/v2/activity_stream/", params)
-        return json.dumps(activities, indent=2)
+        envelope = handle_pagination(
+            client, "/api/v2/activity_stream/", params, with_meta=True
+        )
+        return json.dumps(envelope, indent=2)
 
 
 # =============================================================================
@@ -135,7 +141,7 @@ def get_dashboard_stats() -> str:
 
 
 @read_tool
-def list_system_job_templates(limit: int = 100, offset: int = 0) -> str:
+def list_system_job_templates(limit: int = 20, offset: int = 0) -> str:
     """List AWX system job templates for maintenance operations.
 
     Use this to discover runnable maintenance tasks such as cleanup and
@@ -143,14 +149,20 @@ def list_system_job_templates(limit: int = 100, offset: int = 0) -> str:
     For playbook execution templates, use list_job_templates.
     Returns template IDs for launch_system_job.
 
+    Returns a JSON envelope {count, returned, offset, results}. count is the
+    server-side total; if offset + returned < count, call again with
+    offset=offset+returned to page through.
+
     Args:
         limit: Maximum number of results to return
         offset: Number of results to skip
     """
     with get_ansible_client() as client:
         params: dict[str, Any] = {"limit": limit, "offset": offset}
-        templates = handle_pagination(client, "/api/v2/system_job_templates/", params)
-        return json.dumps(templates, indent=2)
+        envelope = handle_pagination(
+            client, "/api/v2/system_job_templates/", params, with_meta=True
+        )
+        return json.dumps(envelope, indent=2)
 
 
 @read_tool
@@ -200,7 +212,7 @@ def launch_system_job(template_id: int, extra_vars: str = None) -> str:
 
 @read_tool
 def list_system_jobs(
-    limit: int = 100, offset: int = 0, order_by: str = "-created"
+    limit: int = 20, offset: int = 0, order_by: str = "-created"
 ) -> str:
     """List AWX system job executions.
 
@@ -210,6 +222,10 @@ def list_system_jobs(
     Use this for maintenance-task run history such as cleanup and analytics jobs.
     For regular playbook execution runs, use list_jobs.
     For multi-step orchestration runs, use list_workflow_jobs.
+
+    Returns a JSON envelope {count, returned, offset, results}. count is the
+    server-side total; if offset + returned < count, call again with
+    offset=offset+returned to page through.
 
     Args:
         limit: Maximum number of results to return
@@ -223,8 +239,10 @@ def list_system_jobs(
             "offset": offset,
             "order_by": order_by,
         }
-        jobs = handle_pagination(client, "/api/v2/system_jobs/", params)
-        return json.dumps(jobs, indent=2)
+        envelope = handle_pagination(
+            client, "/api/v2/system_jobs/", params, with_meta=True
+        )
+        return json.dumps(envelope, indent=2)
 
 
 @read_tool

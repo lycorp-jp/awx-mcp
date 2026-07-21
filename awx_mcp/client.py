@@ -14,7 +14,7 @@ import re
 import threading
 import time
 from contextlib import contextmanager
-from typing import Any
+from typing import Any, Literal, overload
 from urllib.parse import urljoin, urlparse
 
 import requests
@@ -542,17 +542,64 @@ def get_ansible_client():
             yield client
 
 
+@overload
 def handle_pagination(
-    client: AnsibleClient, endpoint: str, params: dict | None = None
-) -> list[dict[str, Any]]:
+    client: AnsibleClient,
+    endpoint: str,
+    params: dict | None = ...,
+    *,
+    with_meta: Literal[False] = ...,
+) -> list[dict[str, Any]]: ...
+
+
+@overload
+def handle_pagination(
+    client: AnsibleClient,
+    endpoint: str,
+    params: dict | None = ...,
+    *,
+    with_meta: Literal[True],
+) -> dict[str, Any]: ...
+
+
+def handle_pagination(
+    client: AnsibleClient,
+    endpoint: str,
+    params: dict | None = None,
+    *,
+    with_meta: bool = False,
+) -> list[dict[str, Any]] | dict[str, Any]:
     """Handle paginated results from Ansible API.
 
     Translates tool-level 'limit'/'offset' into AWX-native 'page_size'/'page'.
     Respects the 'limit' parameter: stops collecting once the limit is reached.
 
-    Cumulative budget = DEFAULT_READ_TIMEOUT * 2 seconds. If exceeded, returns
-    a partial-results envelope: ``[{"error": "pagination_timeout", "partial": True,
-    "pages_fetched": N, "results": [...]}]``.
+    Two return modes:
+
+    * ``with_meta=False`` (default): returns a plain ``list[dict]`` of results.
+      On cumulative-budget exhaustion, returns a single-element partial envelope:
+      ``[{"error": "pagination_timeout", "partial": True, "pages_fetched": N,
+      "results": [...], "budget_seconds": B}]``.
+
+    * ``with_meta=True``: returns a metadata envelope so callers (and the LLM)
+      know how many items exist server-side and how to page::
+
+          {
+              "count": <int|None>,   # server total from AWX's "count" on page 1;
+                                     # None if unknown (zero-limit short-circuit
+                                     # or a non-paginated response)
+              "returned": <int>,     # len(results)
+              "offset": <int>,       # the requested offset, echoed back
+              "results": [...],
+          }
+
+      When ``returned + offset < count`` the caller should call again with
+      ``offset = offset + returned`` to fetch the next slice. On timeout the same
+      envelope additionally carries the ``error``/``partial``/``pages_fetched``/
+      ``budget_seconds`` keys alongside ``count``/``returned``/``offset``/
+      ``results``.
+
+    Cumulative budget = DEFAULT_READ_TIMEOUT * 2 seconds.
     """
     if params is None:
         params = {}
@@ -563,6 +610,8 @@ def handle_pagination(
 
     # Zero-limit guard: caller asked for nothing, skip HTTP entirely.
     if max_results is not None and max_results <= 0:
+        if with_meta:
+            return {"count": None, "returned": 0, "offset": offset, "results": []}
         return []
 
     # Convert to AWX-native pagination params
@@ -579,12 +628,24 @@ def handle_pagination(
     next_url: str | None = endpoint
     first_page = True
     pages_fetched = 0
+    count: int | None = None
 
     budget_seconds = DEFAULT_READ_TIMEOUT * 2
     started_at = time.monotonic()
 
     while next_url:
         if time.monotonic() - started_at > budget_seconds:
+            if with_meta:
+                return {
+                    "error": "pagination_timeout",
+                    "partial": True,
+                    "pages_fetched": pages_fetched,
+                    "budget_seconds": budget_seconds,
+                    "count": count,
+                    "returned": len(results),
+                    "offset": offset,
+                    "results": results,
+                }
             return [
                 {
                     "error": "pagination_timeout",
@@ -597,6 +658,9 @@ def handle_pagination(
 
         response = client.request("GET", next_url, params=params)
         pages_fetched += 1
+        # Capture the server-side total from the first page only.
+        if pages_fetched == 1:
+            count = response.get("count")
         if "results" in response:
             page_results = response["results"]
             # Skip partial offset within the first page
@@ -605,6 +669,13 @@ def handle_pagination(
                 first_page = False
             results.extend(page_results)
         else:
+            if with_meta:
+                return {
+                    "count": None,
+                    "returned": 1,
+                    "offset": 0,
+                    "results": [response],
+                }
             return [response]
 
         # If a limit was specified, stop once we have enough results
@@ -616,4 +687,11 @@ def handle_pagination(
         if next_url:
             params = None
 
+    if with_meta:
+        return {
+            "count": count,
+            "returned": len(results),
+            "offset": offset,
+            "results": results,
+        }
     return results
