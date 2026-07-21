@@ -19,12 +19,16 @@ from ..utils import parse_json_str, validate_json_str
 
 
 @read_tool
-def list_workflow_templates(limit: int = 100, offset: int = 0) -> str:
+def list_workflow_templates(limit: int = 20, offset: int = 0) -> str:
     """List AWX workflow templates for multi-step orchestration.
 
     Use this to discover orchestration definitions that chain multiple nodes
     and conditions.
     For single-playbook execution templates, use list_job_templates instead.
+
+    Returns a JSON envelope {count, returned, offset, results}. count is the
+    server-side total; if offset + returned < count, call again with
+    offset=offset+returned to page through.
 
     Args:
         limit: Maximum number of results to return
@@ -32,8 +36,10 @@ def list_workflow_templates(limit: int = 100, offset: int = 0) -> str:
     """
     with get_ansible_client() as client:
         params = {"limit": limit, "offset": offset}
-        templates = handle_pagination(client, "/api/v2/workflow_job_templates/", params)
-        return json.dumps(templates, indent=2)
+        envelope = handle_pagination(
+            client, "/api/v2/workflow_job_templates/", params, with_meta=True
+        )
+        return json.dumps(envelope, indent=2)
 
 
 @read_tool
@@ -331,7 +337,7 @@ def delete_workflow_template_survey(template_id: int) -> str:
 
 @read_tool
 def list_workflow_template_nodes(
-    template_id: int, limit: int = 100, offset: int = 0
+    template_id: int, limit: int = 20, offset: int = 0
 ) -> str:
     """List nodes defined in an AWX workflow template.
 
@@ -339,6 +345,10 @@ def list_workflow_template_nodes(
     link management.
     For executed-node outcomes from a running workflow, use
     list_workflow_job_nodes instead.
+
+    Returns a JSON envelope {count, returned, offset, results}. count is the
+    server-side total; if offset + returned < count, call again with
+    offset=offset+returned to page through.
 
     Args:
         template_id: ID of the workflow template
@@ -348,12 +358,13 @@ def list_workflow_template_nodes(
     """
     with get_ansible_client() as client:
         params = {"limit": limit, "offset": offset}
-        nodes = handle_pagination(
+        envelope = handle_pagination(
             client,
             f"/api/v2/workflow_job_templates/{template_id}/workflow_nodes/",
             params,
+            with_meta=True,
         )
-        return json.dumps(nodes, indent=2)
+        return json.dumps(envelope, indent=2)
 
 
 @read_tool

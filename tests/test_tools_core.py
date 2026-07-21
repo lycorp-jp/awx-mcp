@@ -45,7 +45,11 @@ def test_list_job_templates_uses_pagination_params(fake_client):
         "page_size": 10,
         "page": 1,
     }
-    assert json.loads(out) == [{"id": 5}]
+    data = json.loads(out)
+    assert data["results"] == [{"id": 5}]
+    assert data["count"] == 6  # server-side total from the mocked AWX count
+    assert data["offset"] == 5  # requested offset echoed back
+    assert data["returned"] == 1
 
 
 def test_get_job_template(fake_client):

@@ -19,12 +19,16 @@ class PasswordInput(BaseModel):
 
 
 @read_tool
-def list_users(limit: int = 100, offset: int = 0) -> str:
+def list_users(limit: int = 20, offset: int = 0) -> str:
     """List AWX users.
 
     Use this to enumerate user accounts before assigning team membership or
     RBAC roles in the organizations -> teams -> users model. Returns user IDs
     for get_user, update_user, delete_user, and grant_role_to_user.
+
+    Returns a JSON envelope {count, returned, offset, results}. count is the
+    server-side total; if offset + returned < count, call again with
+    offset=offset+returned to page through.
 
     Args:
         limit: Maximum number of user results to return
@@ -32,8 +36,8 @@ def list_users(limit: int = 100, offset: int = 0) -> str:
     """
     with get_ansible_client() as client:
         params = {"limit": limit, "offset": offset}
-        users = handle_pagination(client, "/api/v2/users/", params)
-        return json.dumps(users, indent=2)
+        envelope = handle_pagination(client, "/api/v2/users/", params, with_meta=True)
+        return json.dumps(envelope, indent=2)
 
 
 @read_tool

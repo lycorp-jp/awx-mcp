@@ -59,6 +59,17 @@ and this project adheres to [Semantic Versioning](https://semver.org).
   paths or stdout collection for multi-replica `--serve`).
 
 ### Changed
+- **BREAKING (tool output shape):** every `list_*` tool now returns a
+  pagination envelope `{"count", "returned", "offset", "results"}` instead of
+  a bare JSON array. `count` is the server-side total; when
+  `offset + returned < count`, call the tool again with
+  `offset = offset + returned` to page through. Rationale: LLM clients could
+  not tell whether a truncated page was the whole result set.
+- The default `limit` for every `list_*` tool dropped from 100 to 20, so a
+  default call in a large AWX cannot blow past MCP client token budgets
+  (a raw AWX group/user/team object is 1.5–4.5 KB; 100 of them exceeded the
+  common 25k-token tool-result cap). Explicit `limit`/`offset` still page
+  through everything.
 - Running mode is selected by CLI flags: `awx-mcp` (local stdio),
   `awx-mcp --remote <URL>` (proxy), `awx-mcp --serve [--sse]` (central server).
 - Pinned `mcp` to `>=1.26,<2` and declared `httpx` as a direct dependency

@@ -13,13 +13,17 @@ from ..utils import parse_json_str
 
 @read_tool
 def list_schedules(
-    unified_job_template_id: int = None, limit: int = 100, offset: int = 0
+    unified_job_template_id: int = None, limit: int = 20, offset: int = 0
 ) -> str:
     """List AWX schedules, optionally filtered by template.
 
     Use this to discover recurring iCal triggers attached to job templates or
     workflow templates. Returns schedule IDs and linked unified_job_template
     values for follow-up with get_schedule, update_schedule, or delete_schedule.
+
+    Returns a JSON envelope {count, returned, offset, results}. count is the
+    server-side total; if offset + returned < count, call again with
+    offset=offset+returned to page through.
 
     Args:
         unified_job_template_id: Optional template ID to filter schedules
@@ -33,8 +37,10 @@ def list_schedules(
         if unified_job_template_id is not None:
             params["unified_job_template"] = unified_job_template_id
 
-        schedules = handle_pagination(client, "/api/v2/schedules/", params)
-        return json.dumps(schedules, indent=2)
+        envelope = handle_pagination(
+            client, "/api/v2/schedules/", params, with_meta=True
+        )
+        return json.dumps(envelope, indent=2)
 
 
 @read_tool

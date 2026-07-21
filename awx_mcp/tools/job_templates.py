@@ -15,11 +15,15 @@ from ..utils import parse_json_str, validate_json_str
 
 
 @read_tool
-def list_job_templates(limit: int = 100, offset: int = 0) -> str:
+def list_job_templates(limit: int = 20, offset: int = 0) -> str:
     """List AWX job templates for single playbook executions.
 
     Use this to discover templates that launch one playbook run via launch_job.
     For multi-step orchestration definitions, use list_workflow_templates instead.
+
+    Returns a JSON envelope {count, returned, offset, results}. count is the
+    server-side total; if offset + returned < count, call again with
+    offset=offset+returned to page through.
 
     Args:
         limit: Maximum number of results to return
@@ -27,7 +31,9 @@ def list_job_templates(limit: int = 100, offset: int = 0) -> str:
     """
     with get_ansible_client() as client:
         params = {"limit": limit, "offset": offset}
-        templates = handle_pagination(client, "/api/v2/job_templates/", params)
+        templates = handle_pagination(
+            client, "/api/v2/job_templates/", params, with_meta=True
+        )
         return json.dumps(templates, indent=2)
 
 
@@ -396,13 +402,17 @@ def delete_job_template_survey(template_id: int) -> str:
 
 @read_tool
 def list_template_credentials(
-    template_id: int, limit: int = 100, offset: int = 0
+    template_id: int, limit: int = 20, offset: int = 0
 ) -> str:
     """List credentials attached to an AWX job template.
 
     Use this to verify credential associations that launch_job will use at runtime.
     Returns credential IDs for disassociate_credential_from_template when
     cleanup is needed.
+
+    Returns a JSON envelope {count, returned, offset, results}. count is the
+    server-side total; if offset + returned < count, call again with
+    offset=offset+returned to page through.
 
     Args:
         template_id: ID of the job template
@@ -413,7 +423,10 @@ def list_template_credentials(
     with get_ansible_client() as client:
         params = {"limit": limit, "offset": offset}
         credentials = handle_pagination(
-            client, f"/api/v2/job_templates/{template_id}/credentials/", params
+            client,
+            f"/api/v2/job_templates/{template_id}/credentials/",
+            params,
+            with_meta=True,
         )
         return json.dumps(credentials, indent=2)
 

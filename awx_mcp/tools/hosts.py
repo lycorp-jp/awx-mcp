@@ -13,12 +13,16 @@ from ..utils import validate_json_str
 
 
 @read_tool
-def list_hosts(inventory_id: int = None, limit: int = 100, offset: int = 0) -> str:
+def list_hosts(inventory_id: int = None, limit: int = 20, offset: int = 0) -> str:
     """List AWX hosts.
 
     Returns individual managed machines and their IDs, optionally scoped to one
     inventory. For logical collections inside an inventory, use list_groups
     instead.
+
+    Returns a JSON envelope {count, returned, offset, results}. count is the
+    server-side total; if offset + returned < count, call again with
+    offset=offset+returned to page through.
 
     Args:
         inventory_id: Optional ID of inventory to filter hosts
@@ -34,7 +38,7 @@ def list_hosts(inventory_id: int = None, limit: int = 100, offset: int = 0) -> s
         else:
             endpoint = "/api/v2/hosts/"
 
-        hosts = handle_pagination(client, endpoint, params)
+        hosts = handle_pagination(client, endpoint, params, with_meta=True)
         return json.dumps(hosts, indent=2)
 
 

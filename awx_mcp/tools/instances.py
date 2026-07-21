@@ -30,7 +30,7 @@ def _ping_topology(client):
 
 
 @read_tool
-def list_instances(limit: int = 100, offset: int = 0) -> str:
+def list_instances(limit: int = 20, offset: int = 0) -> str:
     """List AWX cluster instances.
 
     Use this for control-plane visibility into AWX nodes that execute and
@@ -38,7 +38,13 @@ def list_instances(limit: int = 100, offset: int = 0) -> str:
     deeper inspection with get_instance.
 
     If the privileged /api/v2/instances/ collection is empty (insufficient
-    RBAC), this falls back to read-only node topology from /api/v2/ping/.
+    RBAC), this falls back to read-only node topology from /api/v2/ping/
+    (returned in its own {"results", "_source", "_note"} shape rather than
+    the envelope below).
+
+    Returns a JSON envelope {count, returned, offset, results}. count is the
+    server-side total; if offset + returned < count, call again with
+    offset=offset+returned to page through.
 
     Args:
         limit: Maximum number of instance results to return
@@ -46,8 +52,10 @@ def list_instances(limit: int = 100, offset: int = 0) -> str:
     """
     with get_ansible_client() as client:
         params = {"limit": limit, "offset": offset}
-        instances = handle_pagination(client, "/api/v2/instances/", params)
-        if not instances:
+        instances = handle_pagination(
+            client, "/api/v2/instances/", params, with_meta=True
+        )
+        if not instances["results"]:
             topology = _ping_topology(client).get("instances", [])
             if topology:
                 return json.dumps(
@@ -80,7 +88,7 @@ def get_instance(instance_id: int) -> str:
 
 
 @read_tool
-def list_instance_groups(limit: int = 100, offset: int = 0) -> str:
+def list_instance_groups(limit: int = 20, offset: int = 0) -> str:
     """List AWX instance groups.
 
     Use this to inspect how AWX nodes are grouped for execution capacity and
@@ -88,7 +96,13 @@ def list_instance_groups(limit: int = 100, offset: int = 0) -> str:
     get_instance_group and scheduling diagnostics.
 
     If the privileged /api/v2/instance_groups/ collection is empty (insufficient
-    RBAC), this falls back to read-only group topology from /api/v2/ping/.
+    RBAC), this falls back to read-only group topology from /api/v2/ping/
+    (returned in its own {"results", "_source", "_note"} shape rather than
+    the envelope below).
+
+    Returns a JSON envelope {count, returned, offset, results}. count is the
+    server-side total; if offset + returned < count, call again with
+    offset=offset+returned to page through.
 
     Args:
         limit: Maximum number of instance group results to return
@@ -96,8 +110,10 @@ def list_instance_groups(limit: int = 100, offset: int = 0) -> str:
     """
     with get_ansible_client() as client:
         params = {"limit": limit, "offset": offset}
-        groups = handle_pagination(client, "/api/v2/instance_groups/", params)
-        if not groups:
+        groups = handle_pagination(
+            client, "/api/v2/instance_groups/", params, with_meta=True
+        )
+        if not groups["results"]:
             topology = _ping_topology(client).get("instance_groups", [])
             if topology:
                 return json.dumps(
