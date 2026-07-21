@@ -9,9 +9,12 @@ These tests run the package import in a fresh subprocess per case because
 from __future__ import annotations
 
 import json
+import logging
 import subprocess
 import sys
 import textwrap
+
+from awx_mcp.server import warn_if_exposed
 
 GATED_TOOLS = (
     "create_credential",
@@ -113,3 +116,36 @@ def test_credential_management_enabled_tool_count_is_145():
 def test_ad_hoc_command_registered_by_default():
     # run_ad_hoc_command is a normal write tool, gated only by AWX_MCP_READ_ONLY.
     assert "run_ad_hoc_command" in _list_registered_tools(env_value=None)
+
+
+def test_warn_if_exposed_local_hosts_never_warn(caplog):
+    caplog.set_level(logging.DEBUG, logger="ansible-mcp")
+
+    for host in ("127.0.0.1", "localhost", "::1"):
+        for tls_enabled in (True, False):
+            caplog.clear()
+            warn_if_exposed(host, tls_enabled)
+            assert not any(
+                record.levelno == logging.WARNING for record in caplog.records
+            ), f"unexpected warning for local host {host!r} (tls_enabled={tls_enabled})"
+
+
+def test_warn_if_exposed_non_local_without_tls_warns(caplog):
+    caplog.set_level(logging.DEBUG, logger="ansible-mcp")
+
+    warn_if_exposed("0.0.0.0", False)
+
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    message = warnings[0].getMessage()
+    assert "TLS" in message
+    assert "token" in message
+
+
+def test_warn_if_exposed_non_local_with_tls_only_infos(caplog):
+    caplog.set_level(logging.DEBUG, logger="ansible-mcp")
+
+    warn_if_exposed("0.0.0.0", True)
+
+    assert not any(r.levelno == logging.WARNING for r in caplog.records)
+    assert any(r.levelno == logging.INFO for r in caplog.records)

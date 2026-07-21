@@ -21,6 +21,7 @@ import logging
 import os
 import sys
 import time
+from typing import Any
 from urllib.parse import urlparse
 
 import anyio
@@ -33,6 +34,7 @@ from mcp.types import CallToolResult, TextContent
 
 from .tls_config import resolve_ssl_verify
 from .usage import record_proxy_tool_call
+from .utils import mask_secrets
 
 logger = logging.getLogger("awx-mcp.proxy")
 
@@ -44,6 +46,72 @@ _HTTP_TIMEOUT = httpx.Timeout(connect=10.0, read=300.0, write=30.0, pool=10.0)
 
 def _truthy(value: str | None) -> bool:
     return (value or "").lower() in ("true", "1", "yes")
+
+
+def _first_error_text(content: list[Any]) -> str | None:
+    """Return the first text block from an errored result, secret-masked.
+
+    Used to enrich the usage record when the central server returns a normal
+    ``isError=True`` result (not an exception): the first ``TextContent.text`` is
+    the human-readable error, so we mask any inline secret and log it as detail.
+    """
+    for block in content:
+        text = getattr(block, "text", None)
+        if isinstance(text, str):
+            return mask_secrets(text)
+    return None
+
+
+async def _relay_tool_call(
+    upstream: ClientSession,
+    name: str,
+    arguments: dict,
+    *,
+    usage_user: str,
+    central_host: str,
+) -> CallToolResult:
+    """Relay one tool call to the central server and record usage.
+
+    Extracted from the ``@proxy.call_tool()`` closure so the error branches can
+    be unit-tested with a mocked ``upstream``. Behaviour is unchanged: a normal
+    result (including ``isError=True``) is returned as-is; a transport failure is
+    degraded into an ``isError=True`` result instead of crashing the relay. Usage
+    is recorded in ``finally`` (fire-and-forget). ``error_detail`` is pre-set to
+    ``None`` so it is defined on the exception path where ``result`` is unbound.
+    """
+    start = time.monotonic()
+    success = True
+    captured: BaseException | None = None
+    error_detail: str | None = None
+    try:
+        result = await upstream.call_tool(name, arguments)
+        success = not bool(result.isError)
+        if result.isError:
+            error_detail = _first_error_text(result.content)
+        return result
+    except Exception as exc:  # noqa: BLE001 — degrade, don't crash
+        success = False
+        captured = exc
+        return CallToolResult(
+            content=[
+                TextContent(
+                    type="text",
+                    text=f"central awx-mcp unreachable: {exc}",
+                )
+            ],
+            isError=True,
+        )
+    finally:
+        record_proxy_tool_call(
+            name,
+            start,
+            success,
+            captured,
+            user=usage_user,
+            awx_host=central_host,
+            params=arguments,
+            error_detail=error_detail,
+        )
 
 
 async def _run_proxy_async(url: str, token: str, ssl_verify: bool | str) -> None:
@@ -80,35 +148,13 @@ async def _run_proxy_async(url: str, token: str, ssl_verify: bool | str) -> None
 
                 @proxy.call_tool()
                 async def _call_tool(name: str, arguments: dict):
-                    start = time.monotonic()
-                    success = True
-                    captured: BaseException | None = None
-                    try:
-                        result = await upstream.call_tool(name, arguments)
-                        success = not bool(result.isError)
-                        return result
-                    except Exception as exc:  # noqa: BLE001 — degrade, don't crash
-                        success = False
-                        captured = exc
-                        return CallToolResult(
-                            content=[
-                                TextContent(
-                                    type="text",
-                                    text=f"central awx-mcp unreachable: {exc}",
-                                )
-                            ],
-                            isError=True,
-                        )
-                    finally:
-                        record_proxy_tool_call(
-                            name,
-                            start,
-                            success,
-                            captured,
-                            user=usage_user,
-                            awx_host=central_host,
-                            params=arguments,
-                        )
+                    return await _relay_tool_call(
+                        upstream,
+                        name,
+                        arguments,
+                        usage_user=usage_user,
+                        central_host=central_host,
+                    )
 
                 init_opts = proxy.create_initialization_options()
                 async with stdio_server() as (stdio_read, stdio_write):

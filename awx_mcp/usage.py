@@ -68,12 +68,23 @@ def log_backup_count() -> int:
 def make_timed_rotating_handler(path: str) -> TimedRotatingFileHandler:
     """Build a midnight-rotating (UTC, date-suffixed) file handler.
 
-    Shared by the usage log and the server diagnostic log so both honour the
-    same rotation policy.
+    Shared by the usage log, the access log, and the server diagnostic log so all
+    honour the same rotation policy. The actively created file is hardened to
+    owner-only (0600): records mask tokens but still reveal callers, endpoints,
+    and tool arguments. ``TimedRotatingFileHandler`` takes no file mode and opens
+    the file eagerly in ``__init__`` (``delay`` defaults to False), so chmod right
+    after construction targets the just-created file. Rotated backup files are out
+    of scope (they inherit the process umask) — matches plan S3.4 ("신규 파일
+    생성 시"); the handler type and rotation policy are unchanged.
     """
-    return TimedRotatingFileHandler(
+    handler = TimedRotatingFileHandler(
         path, when="midnight", utc=True, backupCount=log_backup_count()
     )
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
+    return handler
 
 
 # --- User + version resolution ------------------------------------------------
@@ -165,11 +176,16 @@ def resolve_user_identifier() -> str:
         cached = _user_cache_by_token.get(key)
         if cached is not None:
             return cached
+        # The /api/v2/me/ lookup is a network call: run it OUTSIDE _user_lock so a
+        # slow lookup for one token never serialises lookups for other tokens.
+        # Two threads racing on the same new token may each look it up once
+        # (benign — the value is identical, and the double-checked write below
+        # keeps whichever landed first; last write wins with the same value).
+        username = _lookup_me_username(token=token)
         with _user_lock:
             cached = _user_cache_by_token.get(key)
             if cached is not None:
                 return cached
-            username = _lookup_me_username(token=token)
             if len(_user_cache_by_token) >= _MAX_TOKEN_CACHE:
                 _user_cache_by_token.clear()
             _user_cache_by_token[key] = username
@@ -177,10 +193,15 @@ def resolve_user_identifier() -> str:
 
     if _user_cache is not None:
         return _user_cache
+    # Same rationale as the passthrough branch: run the network lookup outside
+    # the lock. On first resolution two threads may both look up the static
+    # identity once (benign — identical value); the double-checked write keeps
+    # whichever landed first.
+    username = _lookup_me_username()
     with _user_lock:
         if _user_cache is not None:
             return _user_cache
-        _user_cache = _lookup_me_username()
+        _user_cache = username
     return _user_cache
 
 
@@ -439,6 +460,7 @@ def record_proxy_tool_call(
     user: str,
     awx_host: str,
     params: dict[str, Any] | None = None,
+    error_detail: str | None = None,
 ) -> None:
     """Append a usage entry for a tool call relayed by the proxy.
 
@@ -448,6 +470,9 @@ def record_proxy_tool_call(
     :func:`resolve_user_identifier` -> lazy ``client``/``server`` import ->
     ``ANSIBLE_BASE_URL`` validation, crashing the proxy (which has no BASE_URL).
     ``params`` are the relayed tool arguments; they are redacted before logging.
+    ``error_detail`` carries the central server's error text when it returned a
+    normal ``isError=True`` result (no exception raised); it is already
+    secret-masked by the caller and logged as an ``error`` of type ``ToolError``.
     Swallows all errors so logging never affects the relay.
     """
     try:
@@ -455,7 +480,12 @@ def record_proxy_tool_call(
         if sink is None:
             return
         latency_ms = int((time.monotonic() - start_monotonic) * 1000)
-        error = _error_info(exc) if (not success and exc is not None) else None
+        if not success and exc is not None:
+            error = _error_info(exc)
+        elif not success and error_detail is not None:
+            error = {"type": "ToolError", "message": error_detail}
+        else:
+            error = None
         payload = build_payload(
             tool=tool_name,
             success=success,
@@ -481,7 +511,7 @@ def _record_internal_api(
     method: str | None = None,
     endpoint: str | None = None,
 ) -> None:
-    """Append a usage entry for an internal AWX API call (``kind=internal_api``).
+    """Append a usage entry for an internal AWX API call (``type=internal_api``).
 
     ``user`` is passed explicitly and never re-resolved, so this is safe to call
     from within user resolution. ``method``/``endpoint`` record the HTTP verb and

@@ -83,3 +83,88 @@ def test_run_proxy_requires_token(monkeypatch):
     with pytest.raises(SystemExit) as exc:
         proxy.run_proxy("https://central.example/mcp")
     assert "ANSIBLE_TOKEN" in str(exc.value)
+
+
+def test_relay_tool_call_exception_records_failure(monkeypatch, tmp_path):
+    """Upstream transport failure degrades to an isError result (never crashes)
+    and records the call with success=False and the captured exception."""
+    import json
+
+    import anyio
+
+    import awx_mcp.proxy as proxy
+    import awx_mcp.usage as usage
+
+    log_file = tmp_path / "u.jsonl"
+    monkeypatch.setattr(usage, "USAGE_LOG_FILE", str(log_file))
+    monkeypatch.setattr(usage, "_usage_logger", None)
+
+    class _BoomUpstream:
+        async def call_tool(self, name, arguments):
+            raise RuntimeError("connection reset")
+
+    async def _run():
+        return await proxy._relay_tool_call(
+            _BoomUpstream(),
+            "list_inventories",
+            {},
+            usage_user="argon",
+            central_host="central.example.com",
+        )
+
+    result = anyio.run(_run)
+
+    assert result.isError is True
+    assert "central awx-mcp unreachable" in result.content[0].text
+
+    entry = json.loads(log_file.read_text().splitlines()[-1])
+    assert entry["success"] is False
+    assert entry["transport"] == "proxy"
+    # The captured exception is passed through as the error info.
+    assert entry["error"]["type"] == "RuntimeError"
+
+
+def test_relay_tool_call_iserror_records_masked_detail(monkeypatch, tmp_path):
+    """A normal isError=True result from upstream is logged with its first text
+    block as error detail, with any inline secret masked."""
+    import json
+
+    import anyio
+    from mcp.types import CallToolResult, TextContent
+
+    import awx_mcp.proxy as proxy
+    import awx_mcp.usage as usage
+
+    log_file = tmp_path / "u.jsonl"
+    monkeypatch.setattr(usage, "USAGE_LOG_FILE", str(log_file))
+    monkeypatch.setattr(usage, "_usage_logger", None)
+
+    class _ErrUpstream:
+        async def call_tool(self, name, arguments):
+            return CallToolResult(
+                content=[
+                    TextContent(type="text", text="auth failed token=abc123secret")
+                ],
+                isError=True,
+            )
+
+    async def _run():
+        return await proxy._relay_tool_call(
+            _ErrUpstream(),
+            "get_job",
+            {"id": 5},
+            usage_user="argon",
+            central_host="central.example.com",
+        )
+
+    result = anyio.run(_run)
+    assert result.isError is True
+
+    raw = log_file.read_text()
+    entry = json.loads(raw.splitlines()[-1])
+    assert entry["success"] is False
+    assert entry["error"]["type"] == "ToolError"
+    assert "auth failed" in entry["error"]["message"]
+    # The secret is masked in the logged record.
+    assert "abc123secret" not in raw
+    assert "token=***" in entry["error"]["message"]

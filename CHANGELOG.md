@@ -37,12 +37,49 @@ and this project adheres to [Semantic Versioning](https://semver.org).
   Tighten-only (advisory self-restriction), never loosens server policy.
 - Usage records gained `auth_mode`; the `transport` field now reports
   `stdio` / `streamable-http` / `sse` / `proxy`.
+- Dockerfile hardening: the container now runs as a non-root user (uid 10001),
+  ships a `HEALTHCHECK` probing the streamable-http endpoint (any HTTP response
+  counts as healthy; stdio-mode containers show unhealthy — the image is
+  `--serve`-focused), and pins the `uv` base image to a versioned digest
+  instead of `:latest`.
+- CI coverage gate: `pytest-cov` added to the dev dependency group and the CI
+  test step now enforces `--cov-fail-under=80`.
+- New tests for `warn_if_exposed` (local/non-local × TLS), the proxy relay's
+  exception and upstream-error paths, and a session-reuse test suite.
+- `scripts/check_doc_parity.py` now also verifies that user-facing
+  `AWX_MCP_*`/`ANSIBLE_*` environment variables are documented in the
+  environment-variable tables of all three READMEs (internal-only symbols are
+  allowlisted).
+- Proxy usage records now include an `error` detail when the central server
+  returns a tool failure (`isError`) rather than a transport error; the detail
+  is secret-masked before logging.
+- README (en/ko/ja): documented `AWX_MCP_ACCESS_LOG_FILE` and
+  `AWX_MCP_STATELESS_HTTP` in the environment-variable table, plus a warning
+  that file logs on shared volumes are not multi-process safe (use per-pod
+  paths or stdout collection for multi-replica `--serve`).
 
 ### Changed
 - Running mode is selected by CLI flags: `awx-mcp` (local stdio),
   `awx-mcp --remote <URL>` (proxy), `awx-mcp --serve [--sse]` (central server).
 - Pinned `mcp` to `>=1.26,<2` and declared `httpx` as a direct dependency
   (used by the proxy to inject the caller's token header).
+- Static/cached-token paths now reuse a lazily created per-thread
+  `requests.Session` (connection pooling / TLS keep-alive across tool calls).
+  Passthrough (`--serve`) keeps its per-request session — per-caller token
+  isolation is unchanged.
+- Usage/access/diagnostic log files are created with `0600` permissions
+  (actively created files; rotated backups keep default permissions).
+- User-identity resolution for usage logging no longer holds its lock during
+  the `/api/v2/me/` HTTP call, so concurrent first-time lookups are not
+  serialized (a benign duplicate lookup may occur; last write wins).
+
+### Fixed
+- `_atexit_revoke_targets` no longer accumulates superseded token entries on
+  re-mint: only the latest minted token per AWX base URL is kept for
+  shutdown revocation (best-effort: a token superseded after a transient
+  ping failure may stay live on AWX until its server-side TTL).
+- Stale docstring in the usage module still referring to the removed
+  `kind` field (now `type`).
 
 ### Removed (BREAKING)
 - The `--transport` CLI flag and the `AWX_MCP_TRANSPORT` environment variable.

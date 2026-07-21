@@ -296,8 +296,10 @@ AWX UI에서 미리 생성한 토큰을 사용합니다. 토큰이 만료되지 
 | `AWX_MCP_TLS_CERT` | 미설정 | 서버 TLS 인증서(PEM) 경로. `AWX_MCP_TLS_ENABLE=true`일 때 필수이며, 경로가 없거나 찾을 수 없으면 서버가 시작 시 즉시 실패합니다. |
 | `AWX_MCP_TLS_KEY` | 미설정 | 서버 TLS 개인 키(PEM) 경로. TLS가 활성화되면 필수입니다. |
 | `AWX_MCP_TLS_KEY_PASSWORD` | 미설정 | 개인 키가 암호화된 경우의 비밀번호. 선택 사항. |
+| `AWX_MCP_STATELESS_HTTP` | `false` | 상태 비저장(stateless) streamable-http 모드. 각 요청이 그 자체로 완결되어 프로세스에 세션별 상태를 유지하지 않습니다. 단순 라운드로빈 로드밸런서 뒤에 여러 `--serve` replica를 운영할 때 필요합니다(그렇지 않으면 한 replica에서 만든 세션이 다른 replica로 라우팅될 때 404가 발생합니다). 기본값(off)은 단일 인스턴스/sse 구성의 상태 유지(stateful) 세션 동작을 그대로 유지합니다. |
 | `AWX_MCP_USAGE_LOG_FILE` | 미설정 | JSON Lines 형식의 사용 로그 파일 경로. MCP 도구 호출마다 하나의 JSON 문서(`@timestamp`, `type`, `user`, `tool`, `params`(마스킹된 호출 인자), `trace_id`, `server_version`, `success`, `latency_ms`, `auth_mode`, `transport`, `awx_host`, 실패 시 `error{type,message}`)가 기록됩니다. `--remote` 프록시를 포함해 모든 모드에서 동작합니다. 미설정 시 계측이 비활성화됩니다. [상세 사용 로그](#상세-사용-로그) 섹션 참조. |
 | `AWX_MCP_USAGE_USER` | 미설정 | 프록시의 로컬 사용 로그에서 `user` 필드로 사용할 레이블(선택 사항). 프록시 모드는 사용자명을 조회할 AWX 접근 권한이 없으므로 기본값은 `local`입니다. |
+| `AWX_MCP_ACCESS_LOG_FILE` | 미설정 | `--serve` 서버용 JSON Lines 접속(access) 로그 파일 경로. 들어오는 모든 HTTP 요청이 기록됩니다(클라이언트 IP, 메서드, 경로, 상태 코드, 지연시간). 사용 로그와 마찬가지로 매일 자정(UTC)에 회전합니다. `--serve` 모드에서만 동작합니다 — stdio와 `--remote` 프록시에는 HTTP 소켓이 없습니다. |
 | `AWX_MCP_SERVER_LOG_FILE` | 미설정 | 서버 진단 로그 파일 경로. 기존 stderr 진단/에러 출력을 그대로 파일에도 기록합니다. 미설정 시 stderr에만 출력되고 파일은 생성되지 않습니다. |
 | `AWX_MCP_SERVER_LOG_FORMAT` | `plain` | 서버 진단 로그 형식: `plain` 또는 `json`. |
 | `AWX_MCP_LOG_BACKUP_COUNT` | `7` | 로테이션된 로그 파일 보관 개수. 두 로그 파일 모두 매일 자정(UTC)에 날짜 접미사를 붙여 로테이션됩니다. |
@@ -332,6 +334,8 @@ uv run awx-mcp --serve --host 0.0.0.0 --port 8443
 모든 로그 라인에는 `type` 필드가 있어 종류별로 분리할 수 있습니다: `"tool"`(일반 MCP 도구 호출), `"internal_api"`(서버가 호출하는 `/api/v2/me/` 사용자 확인 요청 — `tool: "me"`로 기록하며 HTTP 메서드와 경로는 별도 `method`/`endpoint` 필드에 기록), `"access"`(HTTP 액세스 로그), `"diagnostic"`(서버 진단 로그). `type` 필드와 공통 `@timestamp` 타임스탬프 필드는 네 종류 레코드에서 일관되게 사용되므로 단일 로그 인덱스에서 type으로 필터링할 수 있습니다. 도구 호출 레코드에는 `params`(호출 인자)도 포함되며, 비밀 성격의 키(password, token, key, `inputs` 등)와 문자열 내 `token=`/`password=`/`Bearer` 값은 마스킹됩니다.
 
 `auth_mode` 필드는 `static`(로컬) 또는 `passthrough`(`--serve`)입니다. `transport` 필드는 `stdio`, `streamable-http`, `sse`, `proxy` 중 하나입니다. 중앙 서버에서 `user` 필드는 각 요청의 토큰이 속한 AWX 계정입니다(사용자별 귀속이며, 토큰당 한 번 조회하여 캐시하고, 원본 토큰과 그 해시는 절대 로깅하지 않습니다). `--remote` 프록시 자체의 로컬 로그에서는 `transport`가 `proxy`이고, `user`는 `AWX_MCP_USAGE_USER`(또는 `local`)이며, `awx_host`는 중앙 서버의 호스트입니다.
+
+> **`--serve` replica를 여러 개 운영할 때:** 사용/접속/진단 로그는 모두 `TimedRotatingFileHandler`를 사용합니다. 스레드 세이프(thread-safe)하지만 공유 볼륨에서는 **멀티프로세스 세이프가 아닙니다** — 자정 회전 시점에 여러 writer가 경합할 수 있습니다. 각 replica의 로그 파일 경로를 pod별 경로로 지정하거나, 아예 미설정으로 두고 stdout 수집에 의존하세요.
 
 ---
 

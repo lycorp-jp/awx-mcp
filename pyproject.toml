@@ -83,6 +83,7 @@ warn_unused_ignores = true
 [dependency-groups]
 dev = [
     "pytest>=9.0.3",
+    "pytest-cov>=5",
     "ruff>=0.15.6,<0.16",
     "mypy==2.3.0",
     "types-requests>=2.31.0",

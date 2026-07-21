@@ -87,6 +87,34 @@ def _build_retry_adapter() -> HTTPAdapter:
     return HTTPAdapter(max_retries=retry)
 
 
+# One shared requests.Session per thread for the static/cached-token paths, so
+# connection-pool keep-alive is reused across tool calls instead of paying a TLS
+# handshake per call. Thread-local (not a single module-global) because
+# requests.Session's connection-pool mutation is not fully thread-safe; one pool
+# per thread sidesteps contention without serializing dispatch. The passthrough
+# path deliberately does NOT use this — it keeps a per-request owned session so a
+# caller's token never shares a connection pool across requests.
+_thread_local = threading.local()
+
+
+def _get_shared_session() -> requests.Session:
+    """Return this thread's shared session, creating it lazily on first use.
+
+    Created via the module symbol ``requests.Session`` so ``@patch(
+    "awx_mcp.client.requests.Session")`` still intercepts it, and so
+    ``ANSIBLE_SSL_VERIFY`` is read at first use rather than frozen at import.
+    """
+    session = getattr(_thread_local, "session", None)
+    if session is None:
+        session = requests.Session()
+        session.verify = ANSIBLE_SSL_VERIFY
+        adapter = _build_retry_adapter()
+        session.mount("http://", adapter)
+        session.mount("https://", adapter)
+        _thread_local.session = session
+    return session
+
+
 class AnsibleClient:
     """HTTP client for Ansible Tower/AWX REST API."""
 
@@ -110,6 +138,10 @@ class AnsibleClient:
         adapter = _build_retry_adapter()
         self.session.mount("http://", adapter)
         self.session.mount("https://", adapter)
+        # True when this client owns its session and must close it on exit.
+        # get_ansible_client() sets this False after injecting a thread-local
+        # shared session, so __exit__ won't close a session other calls reuse.
+        self._owns_session = True
 
     def __enter__(self):
         if not self.token and self.username and self.password:
@@ -117,7 +149,8 @@ class AnsibleClient:
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        self.session.close()
+        if self._owns_session:
+            self.session.close()
 
     def get_token(self) -> str | None:
         """Authenticate and get token using web session approach."""
@@ -192,6 +225,16 @@ class AnsibleClient:
             self._token_id = resp_json.get("id")
             logger.debug("Token obtained successfully (id=%s)", self._token_id)
             if self._token_id is not None:
+                # Supersede any prior revoke target for this base_url so the list
+                # can't grow unbounded across re-mints. Best-effort leak accepted:
+                # re-mint is triggered by the broad ``except AnsibleAPIError`` on
+                # the cached-token ping preflight, which also fires on transient
+                # 503/504 — so a superseded entry's token may still be live on
+                # AWX until its server-side TTL expires. Same best-effort nature
+                # as the SIGKILL/OOM caveat in _revoke_token_at_shutdown.
+                _atexit_revoke_targets[:] = [
+                    t for t in _atexit_revoke_targets if t[0] != self.base_url
+                ]
                 _atexit_revoke_targets.append(
                     (self.base_url, self.token, self._token_id)
                 )
@@ -400,6 +443,8 @@ def get_ansible_client():
             password=ANSIBLE_PASSWORD,
             token=ANSIBLE_TOKEN,
         )
+        client.session = _get_shared_session()
+        client._owns_session = False
         with client:
             yield client
         return
@@ -415,6 +460,8 @@ def get_ansible_client():
             password=ANSIBLE_PASSWORD,
             token=cached_token,
         )
+        client.session = _get_shared_session()
+        client._owns_session = False
         try:
             client.__enter__()
             client.request("GET", "/api/v2/ping/")
@@ -449,6 +496,8 @@ def get_ansible_client():
             password=ANSIBLE_PASSWORD,
             token=existing_token,
         )
+        client.session = _get_shared_session()
+        client._owns_session = False
         with client:
             yield client
         return
@@ -473,6 +522,9 @@ def get_ansible_client():
                 password=ANSIBLE_PASSWORD,
             )
             mint = True
+
+        client.session = _get_shared_session()
+        client._owns_session = False
 
         if mint:
             # authenticates via get_token() — mutates self.token + self._token_id

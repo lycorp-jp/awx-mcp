@@ -26,4 +26,4 @@ jobs:
           ANSIBLE_BASE_URL: "https://awx.example.com/"
           ANSIBLE_TOKEN: "fake-token-for-ci"
           ANSIBLE_SSL_VERIFY: "false"
-        run: uv run pytest tests/ -v
+        run: uv run pytest tests/ -v --cov=awx_mcp --cov-fail-under=80

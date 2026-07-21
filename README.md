@@ -295,8 +295,10 @@ The server automatically creates and caches an OAuth2 token on your behalf.
 | `AWX_MCP_TLS_CERT` | unset | Path to the server's TLS certificate (PEM). Required when `AWX_MCP_TLS_ENABLE=true`; the server fails fast at startup if missing or not found. |
 | `AWX_MCP_TLS_KEY` | unset | Path to the server's TLS private key (PEM). Required when TLS is enabled. |
 | `AWX_MCP_TLS_KEY_PASSWORD` | unset | Password for the private key, if it is encrypted. Optional. |
+| `AWX_MCP_STATELESS_HTTP` | `false` | Stateless streamable-http mode: each request is self-contained, with no per-session state held in the process. Needed to run multiple `--serve` replicas behind a plain round-robin load balancer (otherwise a session created on one replica 404s when routed to another). Default off preserves stateful session behavior for single-instance / sse setups. |
 | `AWX_MCP_USAGE_LOG_FILE` | unset | Path to a JSON Lines usage log; every MCP tool call is recorded as one JSON document (`@timestamp`, `type`, `user`, `tool`, `params` (redacted call arguments), `trace_id`, `server_version`, `success`, `latency_ms`, `auth_mode`, `transport`, `awx_host`, `error{type,message}` on failure). Works in every mode, including the `--remote` proxy. Unset disables instrumentation. See [Verbose usage logging](#verbose-usage-logging). |
 | `AWX_MCP_USAGE_USER` | unset | Optional label used as the `user` field in the proxy's local usage log (proxy mode has no AWX access to resolve a username; defaults to `local`). |
+| `AWX_MCP_ACCESS_LOG_FILE` | unset | Path to a JSON Lines access log for the `--serve` server; every inbound HTTP request is recorded (client IP, method, path, status, latency). Rotates at midnight (UTC), same as the usage log. `--serve` mode only — stdio and the `--remote` proxy have no HTTP socket. |
 | `AWX_MCP_SERVER_LOG_FILE` | unset | Path to a server diagnostic log file, mirroring the existing stderr diagnostics and errors. Unset means stderr only, no file. |
 | `AWX_MCP_SERVER_LOG_FORMAT` | `plain` | Server diagnostic log format: `plain` or `json`. |
 | `AWX_MCP_LOG_BACKUP_COUNT` | `7` | Number of rotated log files to retain. Both log files rotate daily at midnight (UTC) with a date suffix. |
@@ -331,6 +333,8 @@ Usage logging is opt-in: set `AWX_MCP_USAGE_LOG_FILE` to a writable path to star
 Every log line carries a `type` field so records can be split by kind: `"tool"` (regular MCP tool calls), `"internal_api"` (the `/api/v2/me/` user-resolution call the server makes, recorded with `tool: "me"` and the HTTP verb and path in separate `method`/`endpoint` fields), `"access"` (the HTTP access log), and `"diagnostic"` (the server diagnostic log). The `type` field, together with the shared `@timestamp` timestamp field, is consistent across all four record shapes so a single log index can be filtered by type. Tool-call records also include `params` — the call's arguments with secret-named keys (password, token, key, `inputs`, …) and inline `token=`/`password=`/`Bearer` values redacted.
 
 The `auth_mode` field is `static` (local) or `passthrough` (`--serve`). The `transport` field is one of `stdio`, `streamable-http`, `sse`, or `proxy`. In the central server the `user` field is the AWX account behind each request's token (per-user attribution, resolved once per token and cached; the raw token and its hash are never logged). In the `--remote` proxy's own local log, `transport` is `proxy`, `user` is `AWX_MCP_USAGE_USER` (or `local`), and `awx_host` is the central server's host.
+
+> **Multiple `--serve` replicas:** the usage/access/diagnostic logs use `TimedRotatingFileHandler`, which is thread-safe but **not multi-process safe** on a shared volume — concurrent writers can race at midnight rotation. Point each replica's log file env vars at a per-pod path, or leave them unset and rely on stdout collection instead.
 
 ---
 
