@@ -277,13 +277,19 @@ def list_workflow_approval_templates(
         # large AWX instances.
         all_nodes = handle_pagination(client, endpoint)
         # Surface a pagination-budget timeout instead of silently returning a
-        # partial (and therefore wrong) approval list.
-        if (
+        # partial (and therefore wrong) approval list. The timeout is still
+        # reported in the documented envelope shape: the partial raw nodes are
+        # approval-filtered like the happy path, and count is None because the
+        # server-side total is unknown when the scan did not complete.
+        timeout_info: dict[str, Any] = {}
+        timed_out = (
             len(all_nodes) == 1
             and isinstance(all_nodes[0], dict)
             and all_nodes[0].get("error") == "pagination_timeout"
-        ):
-            return json.dumps(all_nodes[0], indent=2)
+        )
+        if timed_out:
+            timeout_info = all_nodes[0]
+            all_nodes = timeout_info.get("results", [])
         # AWX versions differ on which field identifies approval nodes in summary_fields
         approval_nodes = []
         for node in all_nodes:
@@ -299,13 +305,19 @@ def list_workflow_approval_templates(
             else approval_nodes[offset:]
         )
         # count is exact (not a server-reported total) because approval_nodes
-        # is already the complete filtered collection at this point.
-        envelope = {
-            "count": len(approval_nodes),
+        # is already the complete filtered collection at this point — except on
+        # timeout, where the collection is incomplete and count is unknowable.
+        envelope: dict[str, Any] = {
+            "count": None if timed_out else len(approval_nodes),
             "returned": len(window),
             "offset": offset,
             "results": window,
         }
+        if timed_out:
+            envelope["error"] = "pagination_timeout"
+            envelope["partial"] = True
+            envelope["pages_fetched"] = timeout_info.get("pages_fetched")
+            envelope["budget_seconds"] = timeout_info.get("budget_seconds")
         return json.dumps(envelope, indent=2)
 
 

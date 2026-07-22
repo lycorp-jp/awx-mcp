@@ -104,3 +104,49 @@ def test_approval_templates_count_is_client_side_after_filter():
     assert out["count"] == 2  # filtered approval nodes, not the raw total of 3
     assert out["returned"] == 2
     assert [n["id"] for n in out["results"]] == [1, 3]
+
+
+def test_approval_templates_timeout_keeps_envelope_shape():
+    # When the full-node scan hits the pagination budget, the tool must still
+    # answer in the envelope shape: partial raw nodes are approval-filtered,
+    # count is None (server total unknowable), and the timeout error fields
+    # ride along instead of replacing the envelope.
+    partial_nodes = [
+        {
+            "id": 1,
+            "summary_fields": {
+                "unified_job_template": {"unified_job_type": "workflow_approval"}
+            },
+        },
+        {
+            "id": 2,
+            "summary_fields": {"unified_job_template": {"unified_job_type": "job"}},
+        },
+    ]
+    timeout_page = [
+        {
+            "error": "pagination_timeout",
+            "partial": True,
+            "pages_fetched": 4,
+            "results": partial_nodes,
+            "budget_seconds": 180,
+        }
+    ]
+
+    api = MagicMock()
+    with (
+        patch.object(
+            workflow_jobs_mod, "get_ansible_client", new=fake_client_factory(api)
+        ),
+        patch.object(workflow_jobs_mod, "handle_pagination", return_value=timeout_page),
+    ):
+        out = json.loads(workflow_jobs_mod.list_workflow_approval_templates())
+
+    assert out["error"] == "pagination_timeout"
+    assert out["partial"] is True
+    assert out["pages_fetched"] == 4
+    assert out["budget_seconds"] == 180
+    assert out["count"] is None  # scan incomplete: total approvals unknowable
+    assert out["offset"] == 0
+    assert out["returned"] == 1
+    assert [n["id"] for n in out["results"]] == [1]  # approval-filtered partials
