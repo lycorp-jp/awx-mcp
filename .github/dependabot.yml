@@ -1,7 +1,10 @@
 version: 2
 updates:
-  # Python dependencies (reads pyproject.toml)
-  - package-ecosystem: "pip"
+  # Python dependencies. Must be "uv", not "pip": the pip ecosystem only edits
+  # pyproject.toml and leaves uv.lock alone, so a widened version range resolves
+  # straight back to the stale pinned version and CI silently validates nothing
+  # (see PR #25). The uv ecosystem updates pyproject.toml and uv.lock together.
+  - package-ecosystem: "uv"
     directory: "/"
     schedule:
       interval: "weekly"
