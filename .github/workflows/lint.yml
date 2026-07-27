@@ -15,6 +15,11 @@ jobs:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v7
       - run: uv python install 3.12
+      # Must run before `uv sync`: a bare `uv sync` re-locks in place, so it
+      # would rewrite uv.lock and this check would then pass on drift it just
+      # papered over.
+      - name: Lockfile up to date
+        run: uv lock --check
       - run: uv sync --dev
       - name: Ruff lint
         run: uv run ruff check .
