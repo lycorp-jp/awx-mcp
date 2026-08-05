@@ -86,7 +86,7 @@ def test_run_proxy_requires_token(monkeypatch):
 
 
 def test_relay_tool_call_exception_records_failure(monkeypatch, tmp_path):
-    """Upstream transport failure degrades to an isError result (never crashes)
+    """Upstream transport failure degrades to an is_error result (never crashes)
     and records the call with success=False and the captured exception."""
     import json
 
@@ -100,7 +100,7 @@ def test_relay_tool_call_exception_records_failure(monkeypatch, tmp_path):
     monkeypatch.setattr(usage, "_usage_logger", None)
 
     class _BoomUpstream:
-        async def call_tool(self, name, arguments):
+        async def call_tool(self, name, arguments, **kwargs):
             raise RuntimeError("connection reset")
 
     async def _run():
@@ -114,7 +114,7 @@ def test_relay_tool_call_exception_records_failure(monkeypatch, tmp_path):
 
     result = anyio.run(_run)
 
-    assert result.isError is True
+    assert result.is_error is True
     assert "central awx-mcp unreachable" in result.content[0].text
 
     entry = json.loads(log_file.read_text().splitlines()[-1])
@@ -125,7 +125,7 @@ def test_relay_tool_call_exception_records_failure(monkeypatch, tmp_path):
 
 
 def test_relay_tool_call_iserror_records_masked_detail(monkeypatch, tmp_path):
-    """A normal isError=True result from upstream is logged with its first text
+    """A normal is_error=True result from upstream is logged with its first text
     block as error detail, with any inline secret masked."""
     import json
 
@@ -140,12 +140,12 @@ def test_relay_tool_call_iserror_records_masked_detail(monkeypatch, tmp_path):
     monkeypatch.setattr(usage, "_usage_logger", None)
 
     class _ErrUpstream:
-        async def call_tool(self, name, arguments):
+        async def call_tool(self, name, arguments, **kwargs):
             return CallToolResult(
                 content=[
                     TextContent(type="text", text="auth failed token=abc123secret")
                 ],
-                isError=True,
+                is_error=True,
             )
 
     async def _run():
@@ -158,7 +158,7 @@ def test_relay_tool_call_iserror_records_masked_detail(monkeypatch, tmp_path):
         )
 
     result = anyio.run(_run)
-    assert result.isError is True
+    assert result.is_error is True
 
     raw = log_file.read_text()
     entry = json.loads(raw.splitlines()[-1])

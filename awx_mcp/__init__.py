@@ -95,44 +95,56 @@ def main():
 
     from . import tools  # noqa: F401 — registers all tools on import
     from .access_log import AccessLogMiddleware
-    from .server import logger, mcp, resolve_tls_kwargs, warn_if_exposed
+    from .server import (
+        MCP_HOST,
+        MCP_PORT,
+        STATELESS_HTTP,
+        logger,
+        mcp,
+        resolve_tls_kwargs,
+        warn_if_exposed,
+    )
 
     if transport == "stdio":
         logger.info("Starting awx-mcp (local stdio server)")
         mcp.run(transport="stdio")
         return
 
-    # Central server (--serve). Apply CLI host/port overrides, then optionally
-    # serve over TLS. resolve_tls_kwargs validates the cert/key and raises on
-    # misconfiguration.
-    if args.host is not None:
-        mcp.settings.host = args.host
-    if args.port is not None:
-        mcp.settings.port = args.port
+    # Central server (--serve). Resolve the effective bind address (CLI flag wins
+    # over the env default), then optionally serve over TLS. resolve_tls_kwargs
+    # validates the cert/key and raises on misconfiguration. mcp 2.x takes the
+    # bind host per transport at the app factory instead of on the server object,
+    # so the resolved values are threaded through explicitly.
+    host = args.host if args.host is not None else MCP_HOST
+    port = args.port if args.port is not None else MCP_PORT
 
     tls_kwargs = resolve_tls_kwargs(transport)
-    warn_if_exposed(mcp.settings.host, tls_enabled=bool(tls_kwargs))
+    warn_if_exposed(host, tls_enabled=bool(tls_kwargs))
     logger.info(
         "Starting awx-mcp --serve (transport=%s, %s) on %s:%s",
         transport,
         "https" if tls_kwargs else "http",
-        mcp.settings.host,
-        mcp.settings.port,
+        host,
+        port,
     )
 
-    # Drive uvicorn directly (FastMCP.run() cannot pass TLS options or wrap the
+    # Drive uvicorn directly (MCPServer.run() cannot pass TLS options or wrap the
     # app in middleware). log_config=None routes uvicorn's own loggers through
     # the root logging config (JSON in --serve, see server.py); access_log=False
     # drops uvicorn's plain-text access lines — the JSON access log
     # (AccessLogMiddleware) is the access record.
     import uvicorn
 
-    app = mcp.sse_app() if transport == "sse" else mcp.streamable_http_app()
+    app = (
+        mcp.sse_app(host=host)
+        if transport == "sse"
+        else mcp.streamable_http_app(host=host, stateless_http=STATELESS_HTTP)
+    )
     app = AccessLogMiddleware(app)
     uvicorn.run(
         app,
-        host=mcp.settings.host,
-        port=mcp.settings.port,
+        host=host,
+        port=port,
         log_config=None,
         access_log=False,
         **(tls_kwargs or {}),

@@ -7,7 +7,7 @@ Ansible MCP Server - User Management Tools
 import json
 from typing import Any
 
-from mcp.server.fastmcp import Context
+from mcp.server.mcpserver import Context
 from pydantic import BaseModel
 
 from ..client import get_ansible_client, handle_pagination

@@ -3,7 +3,7 @@
 """Typed exception hierarchy for AWX/Tower API errors.
 
 All API errors inherit from AnsibleAPIError. Tools propagate these to the
-MCP client; FastMCP surfaces the exception class name in the error envelope's
+MCP client; MCPServer surfaces the exception class name in the error envelope's
 ``error_type`` field, allowing LLM clients to discriminate auth vs. validation
 vs. transport failures.
 """

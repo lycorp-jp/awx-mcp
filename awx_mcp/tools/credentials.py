@@ -6,7 +6,7 @@ Ansible MCP Server - Credential Management Tools
 
 import json
 
-from mcp.server.fastmcp import Context
+from mcp.server.mcpserver import Context
 from pydantic import BaseModel
 
 from ..client import get_ansible_client, handle_pagination

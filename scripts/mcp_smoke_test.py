@@ -37,7 +37,7 @@ import subprocess
 import sys
 import time
 
-import httpx
+import httpx2
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.sse import sse_client
 from mcp.client.stdio import stdio_client
@@ -123,8 +123,8 @@ async def test_serve() -> tuple[int, str]:
     try:
         _wait_port(port)
         url = f"http://{HOST}:{port}/mcp"
-        async with httpx.AsyncClient(headers=_caller_headers()) as hc:
-            async with streamable_http_client(url, http_client=hc) as (read, write, _):
+        async with httpx2.AsyncClient(headers=_caller_headers()) as hc:
+            async with streamable_http_client(url, http_client=hc) as (read, write):
                 return await _drive(read, write)
     finally:
         proc.terminate()
@@ -222,7 +222,7 @@ async def exercise() -> int:
                     text = ""
                     if result.content:
                         text = getattr(result.content[0], "text", "") or ""
-                    if result.isError:
+                    if result.is_error:
                         failures += 1
                         print(f"[FAIL] {name:32} {text[:70]}")
                     else:
