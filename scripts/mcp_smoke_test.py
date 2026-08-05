@@ -210,7 +210,7 @@ async def exercise() -> int:
             for tool in tools:
                 if not (tool.name.startswith("list_") or tool.name.startswith("get_")):
                     continue
-                required = (tool.inputSchema or {}).get("required") or []
+                required = (tool.input_schema or {}).get("required") or []
                 if not required:
                     targets.append(tool.name)
             targets.sort()
