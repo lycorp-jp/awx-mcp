@@ -84,7 +84,7 @@ warn_unused_ignores = true
 dev = [
     "pytest>=9.1.1",
     "pytest-cov>=5",
-    "ruff>=0.15.6,<0.17",
+    "ruff>=0.16.1,<0.17",
     "mypy==2.3.0",
     "types-requests>=2.33.0.20260712",
     "responses>=0.26.2",
