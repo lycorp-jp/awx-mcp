@@ -35,6 +35,7 @@ from mcp.types import (
     CallToolRequestParams,
     CallToolResult,
     InputRequiredResult,
+    InputResponses,
     ListToolsResult,
     PaginatedRequestParams,
     TextContent,
@@ -77,6 +78,8 @@ async def _relay_tool_call(
     *,
     usage_user: str,
     central_host: str,
+    input_responses: InputResponses | None = None,
+    request_state: str | None = None,
 ) -> CallToolResult | InputRequiredResult:
     """Relay one tool call to the central server and record usage.
 
@@ -87,16 +90,27 @@ async def _relay_tool_call(
     is recorded in ``finally`` (fire-and-forget). ``error_detail`` is pre-set to
     ``None`` so it is defined on the exception path where ``result`` is unbound.
 
-    ``is_error`` is read with ``getattr``: the central server may answer with an
-    ``InputRequiredResult`` (elicitation round-trip), which carries no such field
-    and is relayed verbatim as a success.
+    ``allow_input_required=True`` keeps a multi-round-trip answer relayable: the
+    default makes the SDK raise on an ``InputRequiredResult``, which this
+    function's ``except`` would then mislabel as "central awx-mcp unreachable".
+    The proxy is a relay, so it must hand that result to its own client
+    untouched — hence ``is_error`` is read with ``getattr`` (an
+    ``InputRequiredResult`` carries no such field and counts as a success), and
+    ``input_responses`` / ``request_state`` are forwarded so the client's retry
+    leg reaches the central server with the state it minted.
     """
     start = time.monotonic()
     success = True
     captured: BaseException | None = None
     error_detail: str | None = None
     try:
-        result = await upstream.call_tool(name, arguments, allow_input_required=True)
+        result = await upstream.call_tool(
+            name,
+            arguments,
+            allow_input_required=True,
+            input_responses=input_responses,
+            request_state=request_state,
+        )
         is_error = bool(getattr(result, "is_error", False))
         success = not is_error
         if is_error:
@@ -168,6 +182,8 @@ async def _run_proxy_async(url: str, token: str, ssl_verify: bool | str) -> None
                         params.arguments or {},
                         usage_user=usage_user,
                         central_host=central_host,
+                        input_responses=params.input_responses,
+                        request_state=params.request_state,
                     )
 
                 # mcp 2.x replaced the @server.list_tools()/@server.call_tool()

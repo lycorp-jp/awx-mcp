@@ -168,3 +168,60 @@ def test_relay_tool_call_iserror_records_masked_detail(monkeypatch, tmp_path):
     # The secret is masked in the logged record.
     assert "abc123secret" not in raw
     assert "token=***" in entry["error"]["message"]
+
+
+def test_relay_tool_call_relays_input_required_and_forwards_state(
+    monkeypatch, tmp_path
+):
+    """A multi-round-trip answer is relayed verbatim, counted as a success, and
+    the client's retry state is forwarded so the second leg reaches upstream.
+
+    Without ``allow_input_required=True`` the SDK raises on an
+    ``InputRequiredResult`` and the relay's ``except`` would mislabel it as
+    "central awx-mcp unreachable"; without forwarding ``input_responses`` /
+    ``request_state`` the retry would arrive at the central server stripped of
+    the state it minted.
+    """
+    import json
+
+    import anyio
+    from mcp.types import ElicitResult, InputRequiredResult
+
+    import awx_mcp.proxy as proxy
+    import awx_mcp.usage as usage
+
+    log_file = tmp_path / "u.jsonl"
+    monkeypatch.setattr(usage, "USAGE_LOG_FILE", str(log_file))
+    monkeypatch.setattr(usage, "_usage_logger", None)
+
+    seen: dict = {}
+    sentinel = InputRequiredResult(input_requests=None, request_state="STATE-1")
+    responses = {"elicit-1": ElicitResult(action="accept", content={"field": "v"})}
+
+    class _InputRequiredUpstream:
+        async def call_tool(self, name, arguments, **kwargs):
+            seen.update(kwargs)
+            return sentinel
+
+    async def _run():
+        return await proxy._relay_tool_call(
+            _InputRequiredUpstream(),
+            "create_credential",
+            {"name": "c"},
+            usage_user="argon",
+            central_host="central.example.com",
+            input_responses=responses,
+            request_state="STATE-0",
+        )
+
+    result = anyio.run(_run)
+
+    # Relayed untouched, not degraded into an error result.
+    assert result is sentinel
+    # The retry state reached upstream.
+    assert seen["allow_input_required"] is True
+    assert seen["input_responses"] is responses
+    assert seen["request_state"] == "STATE-0"
+    # No is_error field on this result shape -> recorded as a success.
+    entry = json.loads(log_file.read_text().splitlines()[-1])
+    assert entry["success"] is True
