@@ -13,7 +13,12 @@ from ..utils import validate_json_str
 
 
 @read_tool
-def list_hosts(inventory_id: int = None, limit: int = 20, offset: int = 0) -> str:
+def list_hosts(
+    inventory_id: int = None,
+    limit: int = 20,
+    offset: int = 0,
+    hostname: str = None,
+) -> str:
     """List AWX hosts.
 
     Returns individual managed machines and their IDs, optionally scoped to one
@@ -24,14 +29,21 @@ def list_hosts(inventory_id: int = None, limit: int = 20, offset: int = 0) -> st
     server-side total; if offset + returned < count, call again with
     offset=offset+returned to page through.
 
+    Hostname searches are performed server-side using AWX's case-insensitive
+    partial-name filter.
+
     Args:
         inventory_id: Optional ID of inventory to filter hosts
             (from list_inventories response)
         limit: Maximum number of results to return
+        hostname: Optional full or partial hostname, matched case-insensitively.
         offset: Number of results to skip
     """
     with get_ansible_client() as client:
         params = {"limit": limit, "offset": offset}
+
+        if hostname:
+            params["name__icontains"] = hostname.strip()
 
         if inventory_id is not None:
             endpoint = f"/api/v2/inventories/{inventory_id}/hosts/"

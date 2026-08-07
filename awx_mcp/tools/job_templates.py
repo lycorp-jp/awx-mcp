@@ -15,22 +15,35 @@ from ..utils import parse_json_str, validate_json_str
 
 
 @read_tool
-def list_job_templates(limit: int = 20, offset: int = 0) -> str:
+def list_job_templates(
+    template_name: str = None,
+    limit: int = 20,
+    offset: int = 0,
+) -> str:
     """List AWX job templates for single playbook executions.
 
     Use this to discover templates that launch one playbook run via launch_job.
     For multi-step orchestration definitions, use list_workflow_templates instead.
+
+    Job template name searches are performed server-side using AWX's
+    case-insensitive partial-name filter.
 
     Returns a JSON envelope {count, returned, offset, results}. count is the
     server-side total; if offset + returned < count, call again with
     offset=offset+returned to page through.
 
     Args:
-        limit: Maximum number of results to return
-        offset: Number of results to skip
+        template_name: Optional full or partial job template name, matched
+            case-insensitively.
+        limit: Maximum number of results to return.
+        offset: Number of results to skip.
     """
     with get_ansible_client() as client:
         params = {"limit": limit, "offset": offset}
+
+        if template_name:
+            params["name__icontains"] = template_name.strip()
+
         templates = handle_pagination(
             client, "/api/v2/job_templates/", params, with_meta=True
         )
