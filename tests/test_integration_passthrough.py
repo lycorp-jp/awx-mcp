@@ -24,7 +24,7 @@ import threading
 import time
 
 import anyio
-import httpx
+import httpx2
 import pytest
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.sse import sse_client
@@ -127,8 +127,8 @@ def _stop(proc: subprocess.Popen) -> None:
 
 async def _drive_streamable(url: str, token: str | None):
     headers = {"Authorization": f"Bearer {token}"} if token else {}
-    async with httpx.AsyncClient(headers=headers) as hc:
-        async with streamable_http_client(url, http_client=hc) as (r, w, _):
+    async with httpx2.AsyncClient(headers=headers) as hc:
+        async with streamable_http_client(url, http_client=hc) as (r, w):
             async with ClientSession(r, w) as s:
                 await s.initialize()
                 return await s.call_tool("get_ansible_version", {})
@@ -155,7 +155,7 @@ def test_streamable_http_forwards_caller_token(fake_awx):
     finally:
         _stop(proc)
 
-    assert not result.isError, result.content
+    assert not result.is_error, result.content
     pings = [a for (p, a) in captured.auth_headers if p.startswith("/api/v2/ping")]
     assert pings, "fake AWX never received the ping"
     assert all(a == "Bearer CALLER-TOKEN-A" for a in pings), captured.auth_headers
@@ -169,7 +169,7 @@ def test_streamable_http_missing_token_is_rejected(fake_awx):
     finally:
         _stop(proc)
 
-    assert result.isError
+    assert result.is_error
     text = getattr(result.content[0], "text", "") if result.content else ""
     assert "token is required" in text.lower() or "passthrough" in text.lower()
 
@@ -183,7 +183,7 @@ def test_sse_forwards_caller_token(fake_awx):
     finally:
         _stop(proc)
 
-    assert not result.isError, result.content
+    assert not result.is_error, result.content
     pings = [a for (p, a) in captured.auth_headers if p.startswith("/api/v2/ping")]
     assert pings and all(a == "Bearer CALLER-TOKEN-SSE" for a in pings)
 
@@ -218,6 +218,6 @@ def test_proxy_relay_chain_forwards_token(fake_awx):
         _stop(central)
 
     assert count > 0
-    assert not result.isError, result.content
+    assert not result.is_error, result.content
     pings = [a for (p, a) in captured.auth_headers if p.startswith("/api/v2/ping")]
     assert pings and all(a == "Bearer PROXY-USER-TOKEN" for a in pings)

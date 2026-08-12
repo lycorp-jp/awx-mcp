@@ -72,8 +72,19 @@ and this project adheres to [Semantic Versioning](https://semver.org).
   through everything.
 - Running mode is selected by CLI flags: `awx-mcp` (local stdio),
   `awx-mcp --remote <URL>` (proxy), `awx-mcp --serve [--sse]` (central server).
-- Pinned `mcp` to `>=1.26,<2` and declared `httpx` as a direct dependency
-  (used by the proxy to inject the caller's token header).
+- Upgraded to the `mcp` 2.x SDK (pinned `>=2.0.0,<3`). No behaviour or tool
+  surface change; the port covers the SDK's renames: `FastMCP`/`Context` moved
+  to `mcp.server.mcpserver.MCPServer`/`Context`, `CallToolResult.isError` became
+  `is_error`, `streamable_http_client` yields `(read, write)` without the
+  session-id getter, the lowlevel `Server`'s `@list_tools()`/`@call_tool()`
+  decorators became the `on_list_tools=`/`on_call_tool=` constructor hooks, and
+  the bind host/port/stateless-http settings moved from the server constructor
+  to the per-transport app factory. The direct dependency for the proxy's token
+  header switched from `httpx` to `httpx2` to match the SDK's HTTP stack.
+- Passthrough mode reads the caller's request headers from a ContextVar published
+  by an MCPServer middleware, replacing mcp 1.x's process-wide
+  `mcp.get_context().request_context.request`, which 2.x removed. `get_request_header()`
+  keeps its signature, so tool code and `client.py` are unchanged.
 - Static/cached-token paths now reuse a lazily created per-thread
   `requests.Session` (connection pooling / TLS keep-alive across tool calls).
   Passthrough (`--serve`) keeps its per-request session — per-caller token

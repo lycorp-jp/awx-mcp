@@ -45,17 +45,59 @@ def test_get_request_token_parsing(monkeypatch, headers, expected):
     assert client.get_request_token() == expected
 
 
-def test_get_request_header_returns_none_outside_request(monkeypatch):
-    """The request_context property raises ValueError outside a request; the
-    helper must swallow it and return None (not propagate)."""
+def test_get_request_header_returns_none_outside_request():
+    """No middleware has published headers, so the helper returns None rather
+    than raising — the stdio/local case, and anything outside a request."""
+    assert server.get_request_header("authorization") is None
+
+
+def test_capture_request_headers_publishes_and_clears():
+    """The middleware exposes the inbound headers for the duration of the
+    message and unsets them afterwards, so a value cannot leak into the next
+    message handled on the same task."""
+    import anyio
+
+    class _Request:
+        headers = {"authorization": "Bearer abc123"}
 
     class _Ctx:
-        @property
-        def request_context(self):
-            raise ValueError("Context is not available outside of a request")
+        request = _Request()
 
-    monkeypatch.setattr(server.mcp, "get_context", lambda: _Ctx())
+    seen: list[str | None] = []
+
+    async def _call_next(_ctx):
+        seen.append(server.get_request_header("authorization"))
+        return None
+
+    async def _run():
+        await server._capture_request_headers(_Ctx(), _call_next)
+
+    anyio.run(_run)
+
+    assert seen == ["Bearer abc123"]
+    # Cleared once the message is done.
     assert server.get_request_header("authorization") is None
+
+
+def test_capture_request_headers_on_stdio_has_no_headers():
+    """stdio carries no HTTP request, so nothing is published and lookups stay
+    None instead of raising."""
+    import anyio
+
+    class _Ctx:
+        request = None
+
+    seen: list[str | None] = []
+
+    async def _call_next(_ctx):
+        seen.append(server.get_request_header("authorization"))
+        return None
+
+    async def _run():
+        await server._capture_request_headers(_Ctx(), _call_next)
+
+    anyio.run(_run)
+    assert seen == [None]
 
 
 # ---------------------------------------------------------------------------

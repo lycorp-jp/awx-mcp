@@ -3,21 +3,23 @@
 """
 Ansible MCP Server - Server Configuration
 
-FastMCP instance, environment configuration, and logging setup.
+MCPServer instance, environment configuration, and logging setup.
 """
 
+import contextvars
 import functools
 import inspect
 import json
 import logging
 import os
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import urlparse
 
 import urllib3
-from mcp.server.fastmcp import FastMCP
+from mcp.server.context import CallNext, HandlerResult, ServerRequestContext
+from mcp.server.mcpserver import MCPServer
 from mcp.types import ToolAnnotations
 
 from .tls_config import resolve_ssl_verify
@@ -63,9 +65,44 @@ STATELESS_HTTP = os.environ.get("AWX_MCP_STATELESS_HTTP", "false").lower() in (
     "yes",
 )
 
-# Initialize FastMCP server (host/port apply to the sse and streamable-http
-# transports; ignored for stdio)
-mcp = FastMCP("ansible", host=MCP_HOST, port=MCP_PORT, stateless_http=STATELESS_HTTP)
+# --- Inbound request headers -------------------------------------------------
+# Passthrough mode needs the caller's headers from deep inside a tool body
+# (client.py builds the AWX auth from them, and the read-only gate checks
+# X-AWX-Read-Only). mcp 1.x exposed a process-wide request context for this
+# (`mcp.get_context().request_context.request`); mcp 2.x removed it and only
+# hands the request to a `Context`-annotated tool parameter. Threading a `ctx`
+# argument through all 145 tools is not viable, so the headers are captured once
+# per inbound message by the middleware below and read back off a ContextVar.
+_request_headers: contextvars.ContextVar[Mapping[str, str] | None] = (
+    contextvars.ContextVar("awx_mcp_request_headers", default=None)
+)
+
+
+async def _capture_request_headers(
+    ctx: ServerRequestContext[Any, Any], call_next: CallNext
+) -> HandlerResult:
+    """Publish the inbound request's headers for the duration of the message.
+
+    Registered as MCPServer middleware, so it wraps every request/notification
+    with the transport's HTTP request already attached. ``ctx.request`` is
+    ``None`` on stdio (no headers), which leaves the ContextVar unset and
+    ``get_request_header`` returning ``None`` — the same behaviour local mode had
+    under mcp 1.x. The token is reset in ``finally`` so a header value can never
+    leak into a later message handled on the same task.
+    """
+    request = getattr(ctx, "request", None)
+    headers = getattr(request, "headers", None) if request is not None else None
+    token = _request_headers.set(headers)
+    try:
+        return await call_next(ctx)
+    finally:
+        _request_headers.reset(token)
+
+
+# Initialize the MCP server. Unlike mcp 1.x FastMCP, MCPServer takes no
+# host/port/stateless_http: those are per-transport and are passed at the
+# sse_app()/streamable_http_app() call sites in __init__.main().
+mcp = MCPServer("ansible", middleware=[_capture_request_headers])
 
 # Configuration
 ANSIBLE_BASE_URL = os.environ.get("ANSIBLE_BASE_URL")
@@ -252,20 +289,16 @@ def resolve_tls_kwargs(transport: str) -> dict[str, str] | None:
 def get_request_header(name: str) -> str | None:
     """Return an inbound request header (case-insensitive), or ``None``.
 
-    Reads the current request's Starlette headers via the FastMCP request
-    context. Returns ``None`` outside a request (stdio, or before/after a
-    request) and never raises — the ``request_context`` property raises
-    ``ValueError`` when there is no active request, which ``getattr`` would not
-    swallow, so the access is wrapped explicitly.
+    Reads the Starlette headers published by ``_capture_request_headers`` for the
+    message currently being handled. Returns ``None`` outside a request and on
+    stdio (no HTTP request exists), and never raises — a header lookup must not
+    be able to fail a tool.
     """
-    try:
-        req = mcp.get_context().request_context.request
-    except (LookupError, ValueError):
-        return None
-    if req is None:
+    headers = _request_headers.get()
+    if headers is None:
         return None
     try:
-        return req.headers.get(name)
+        return headers.get(name)
     except Exception:  # noqa: BLE001 — header access must never fail a tool
         return None
 

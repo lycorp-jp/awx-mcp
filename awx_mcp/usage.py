@@ -471,7 +471,7 @@ def record_proxy_tool_call(
     ``ANSIBLE_BASE_URL`` validation, crashing the proxy (which has no BASE_URL).
     ``params`` are the relayed tool arguments; they are redacted before logging.
     ``error_detail`` carries the central server's error text when it returned a
-    normal ``isError=True`` result (no exception raised); it is already
+    normal ``is_error=True`` result (no exception raised); it is already
     secret-masked by the caller and logged as an ``error`` of type ``ToolError``.
     Swallows all errors so logging never affects the relay.
     """
@@ -542,7 +542,7 @@ def instrument_tool(func: Callable[..., Any]) -> Callable[..., Any]:
     """Wrap a tool function with fire-and-forget usage instrumentation.
 
     ``functools.wraps`` preserves the wrapped function's signature, docstring,
-    and annotations so FastMCP's schema generation is unaffected. Supports both
+    and annotations so MCPServer's schema generation is unaffected. Supports both
     sync and async tools. When instrumentation is disabled (no log file) the
     wrapper is a thin pass-through.
     """

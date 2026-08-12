@@ -31,7 +31,7 @@ class _FakeElicitResult:
 
 
 class FakeContext:
-    """Duck-typed stand-in for ``mcp.server.fastmcp.Context``.
+    """Duck-typed stand-in for ``mcp.server.mcpserver.Context``.
 
     Only implements the ``elicit`` async method. Production code reads
     ``result.action`` and ``result.data.<field>``; nothing else.

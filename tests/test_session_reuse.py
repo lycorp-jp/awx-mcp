@@ -147,14 +147,17 @@ def test_direct_client_owns_its_session_by_default():
 # per-thread isolation
 # --------------------------------------------------------------------------- #
 def test_different_threads_get_different_sessions(static_token_env):
-    results: dict[int, int] = {}
+    # The session objects are kept (not their ids): with ids, a worker's session
+    # could be garbage-collected before the other worker allocates, letting
+    # CPython reuse the address and making two distinct sessions compare equal.
+    results: dict[int, object] = {}
 
     def worker(key: int) -> None:
         # Ensure a fresh thread-local session for this worker thread.
         if hasattr(client_mod._thread_local, "session"):
             del client_mod._thread_local.session
         with client_mod.get_ansible_client() as client:
-            results[key] = id(client.session)
+            results[key] = client.session
 
     t1 = threading.Thread(target=worker, args=(1,))
     t2 = threading.Thread(target=worker, args=(2,))
@@ -163,7 +166,7 @@ def test_different_threads_get_different_sessions(static_token_env):
     t1.join()
     t2.join()
 
-    assert results[1] != results[2]
+    assert results[1] is not results[2]
 
 
 # --------------------------------------------------------------------------- #

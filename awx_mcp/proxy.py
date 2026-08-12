@@ -25,12 +25,21 @@ from typing import Any
 from urllib.parse import urlparse
 
 import anyio
-import httpx
+import httpx2
 from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
+from mcp.server.context import ServerRequestContext
 from mcp.server.lowlevel import Server
 from mcp.server.stdio import stdio_server
-from mcp.types import CallToolResult, TextContent
+from mcp.types import (
+    CallToolRequestParams,
+    CallToolResult,
+    InputRequiredResult,
+    InputResponses,
+    ListToolsResult,
+    PaginatedRequestParams,
+    TextContent,
+)
 
 from .tls_config import resolve_ssl_verify
 from .usage import record_proxy_tool_call
@@ -41,7 +50,7 @@ logger = logging.getLogger("awx-mcp.proxy")
 # Generous read timeout: a relayed tool call blocks until the central server
 # finishes its AWX request (which itself allows a long read), so the proxy must
 # not time out first.
-_HTTP_TIMEOUT = httpx.Timeout(connect=10.0, read=300.0, write=30.0, pool=10.0)
+_HTTP_TIMEOUT = httpx2.Timeout(connect=10.0, read=300.0, write=30.0, pool=10.0)
 
 
 def _truthy(value: str | None) -> bool:
@@ -52,7 +61,7 @@ def _first_error_text(content: list[Any]) -> str | None:
     """Return the first text block from an errored result, secret-masked.
 
     Used to enrich the usage record when the central server returns a normal
-    ``isError=True`` result (not an exception): the first ``TextContent.text`` is
+    ``is_error=True`` result (not an exception): the first ``TextContent.text`` is
     the human-readable error, so we mask any inline secret and log it as detail.
     """
     for block in content:
@@ -69,25 +78,43 @@ async def _relay_tool_call(
     *,
     usage_user: str,
     central_host: str,
-) -> CallToolResult:
+    input_responses: InputResponses | None = None,
+    request_state: str | None = None,
+) -> CallToolResult | InputRequiredResult:
     """Relay one tool call to the central server and record usage.
 
-    Extracted from the ``@proxy.call_tool()`` closure so the error branches can
-    be unit-tested with a mocked ``upstream``. Behaviour is unchanged: a normal
-    result (including ``isError=True``) is returned as-is; a transport failure is
-    degraded into an ``isError=True`` result instead of crashing the relay. Usage
+    Extracted from the ``on_call_tool`` handler so the error branches can be
+    unit-tested with a mocked ``upstream``. Behaviour is unchanged: a normal
+    result (including ``is_error=True``) is returned as-is; a transport failure is
+    degraded into an ``is_error=True`` result instead of crashing the relay. Usage
     is recorded in ``finally`` (fire-and-forget). ``error_detail`` is pre-set to
     ``None`` so it is defined on the exception path where ``result`` is unbound.
+
+    ``allow_input_required=True`` keeps a multi-round-trip answer relayable: the
+    default makes the SDK raise on an ``InputRequiredResult``, which this
+    function's ``except`` would then mislabel as "central awx-mcp unreachable".
+    The proxy is a relay, so it must hand that result to its own client
+    untouched — hence ``is_error`` is read with ``getattr`` (an
+    ``InputRequiredResult`` carries no such field and counts as a success), and
+    ``input_responses`` / ``request_state`` are forwarded so the client's retry
+    leg reaches the central server with the state it minted.
     """
     start = time.monotonic()
     success = True
     captured: BaseException | None = None
     error_detail: str | None = None
     try:
-        result = await upstream.call_tool(name, arguments)
-        success = not bool(result.isError)
-        if result.isError:
-            error_detail = _first_error_text(result.content)
+        result = await upstream.call_tool(
+            name,
+            arguments,
+            allow_input_required=True,
+            input_responses=input_responses,
+            request_state=request_state,
+        )
+        is_error = bool(getattr(result, "is_error", False))
+        success = not is_error
+        if is_error:
+            error_detail = _first_error_text(getattr(result, "content", []))
         return result
     except Exception as exc:  # noqa: BLE001 — degrade, don't crash
         success = False
@@ -99,7 +126,7 @@ async def _relay_tool_call(
                     text=f"central awx-mcp unreachable: {exc}",
                 )
             ],
-            isError=True,
+            is_error=True,
         )
     finally:
         record_proxy_tool_call(
@@ -124,37 +151,49 @@ async def _run_proxy_async(url: str, token: str, ssl_verify: bool | str) -> None
     central_host = urlparse(url).hostname or "unknown"
     usage_user = os.environ.get("AWX_MCP_USAGE_USER") or "local"
 
-    async with httpx.AsyncClient(
+    async with httpx2.AsyncClient(
         headers=headers, verify=ssl_verify, timeout=_HTTP_TIMEOUT
     ) as http_client:
         async with streamable_http_client(url, http_client=http_client) as (
             read_stream,
             write_stream,
-            _get_session_id,
         ):
             async with ClientSession(read_stream, write_stream) as upstream:
                 await upstream.initialize()
                 logger.info("Connected to central awx-mcp at %s", url)
 
-                proxy = Server("awx-mcp-proxy")
-
-                @proxy.list_tools()
-                async def _list_tools():
+                async def _list_tools(
+                    _ctx: ServerRequestContext[Any, Any],
+                    params: PaginatedRequestParams | None,
+                ) -> ListToolsResult:
                     # A transport failure here raises, which the lowlevel server
                     # converts to a JSON-RPC error (ListToolsResult has no
-                    # isError field).
-                    result = await upstream.list_tools()
-                    return result.tools
+                    # is_error field). The result is relayed whole so the central
+                    # server's next_cursor drives the client's pagination.
+                    return await upstream.list_tools(params=params)
 
-                @proxy.call_tool()
-                async def _call_tool(name: str, arguments: dict):
+                async def _call_tool(
+                    _ctx: ServerRequestContext[Any, Any],
+                    params: CallToolRequestParams,
+                ) -> CallToolResult | InputRequiredResult:
                     return await _relay_tool_call(
                         upstream,
-                        name,
-                        arguments,
+                        params.name,
+                        params.arguments or {},
                         usage_user=usage_user,
                         central_host=central_host,
+                        input_responses=params.input_responses,
+                        request_state=params.request_state,
                     )
+
+                # mcp 2.x replaced the @server.list_tools()/@server.call_tool()
+                # decorators with these constructor hooks, so the handlers are
+                # defined above and wired in here.
+                proxy = Server(
+                    "awx-mcp-proxy",
+                    on_list_tools=_list_tools,
+                    on_call_tool=_call_tool,
+                )
 
                 init_opts = proxy.create_initialization_options()
                 async with stdio_server() as (stdio_read, stdio_write):
