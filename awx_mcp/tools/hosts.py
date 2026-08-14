@@ -40,9 +40,9 @@ def list_hosts(
         offset: Number of results to skip
     """
     with get_ansible_client() as client:
-        params = {"limit": limit, "offset": offset}
+        params: dict[str, Any] = {"limit": limit, "offset": offset}
 
-        if hostname:
+        if hostname and hostname.strip():
             params["name__icontains"] = hostname.strip()
 
         if inventory_id is not None:

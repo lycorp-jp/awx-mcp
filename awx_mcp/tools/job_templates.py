@@ -39,9 +39,9 @@ def list_job_templates(
         offset: Number of results to skip.
     """
     with get_ansible_client() as client:
-        params = {"limit": limit, "offset": offset}
+        params: dict[str, Any] = {"limit": limit, "offset": offset}
 
-        if template_name:
+        if template_name and template_name.strip():
             params["name__icontains"] = template_name.strip()
 
         templates = handle_pagination(
