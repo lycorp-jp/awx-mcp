@@ -5,6 +5,7 @@ Ansible MCP Server - Credential Management Tools
 """
 
 import json
+from typing import Any
 
 from mcp.server.mcpserver import Context
 from pydantic import BaseModel
@@ -19,7 +20,11 @@ class CredentialInputs(BaseModel):
 
 
 @read_tool
-def list_credentials(limit: int = 20, offset: int = 0) -> str:
+def list_credentials(
+    credential_name: str = None,
+    limit: int = 20,
+    offset: int = 0,
+) -> str:
     """List AWX credentials.
 
     Returns credential IDs, types, and ownership context used by projects,
@@ -27,16 +32,26 @@ def list_credentials(limit: int = 20, offset: int = 0) -> str:
     credential_id values with get_credential, create_project, and
     create_inventory_source.
 
+    Credential name searches are performed server-side using AWX's
+    case-insensitive partial-name filter. Prefer this over paging through the
+    whole collection when resolving a name to an ID.
+
     Returns a JSON envelope {count, returned, offset, results}. count is the
     server-side total; if offset + returned < count, call again with
     offset=offset+returned to page through.
 
     Args:
+        credential_name: Optional full or partial credential name, matched
+            case-insensitively.
         limit: Maximum number of results to return
         offset: Number of results to skip
     """
     with get_ansible_client() as client:
-        params = {"limit": limit, "offset": offset}
+        params: dict[str, Any] = {"limit": limit, "offset": offset}
+
+        if credential_name and credential_name.strip():
+            params["name__icontains"] = credential_name.strip()
+
         credentials = handle_pagination(
             client, "/api/v2/credentials/", params, with_meta=True
         )
@@ -60,22 +75,36 @@ def get_credential(credential_id: int) -> str:
 
 
 @read_tool
-def list_credential_types(limit: int = 20, offset: int = 0) -> str:
+def list_credential_types(
+    type_name: str = None,
+    limit: int = 20,
+    offset: int = 0,
+) -> str:
     """List AWX credential types.
 
     Returns available credential schemas such as machine, SCM, cloud, and
     vault types. Use returned credential_type_id values with create_credential.
+
+    Credential type name searches are performed server-side using AWX's
+    case-insensitive partial-name filter. Prefer this over paging through the
+    whole collection when resolving a name to an ID.
 
     Returns a JSON envelope {count, returned, offset, results}. count is the
     server-side total; if offset + returned < count, call again with
     offset=offset+returned to page through.
 
     Args:
+        type_name: Optional full or partial credential type name, matched
+            case-insensitively.
         limit: Maximum number of results to return
         offset: Number of results to skip
     """
     with get_ansible_client() as client:
-        params = {"limit": limit, "offset": offset}
+        params: dict[str, Any] = {"limit": limit, "offset": offset}
+
+        if type_name and type_name.strip():
+            params["name__icontains"] = type_name.strip()
+
         credential_types = handle_pagination(
             client, "/api/v2/credential_types/", params, with_meta=True
         )

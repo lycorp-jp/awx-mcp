@@ -141,7 +141,11 @@ def get_dashboard_stats() -> str:
 
 
 @read_tool
-def list_system_job_templates(limit: int = 20, offset: int = 0) -> str:
+def list_system_job_templates(
+    template_name: str = None,
+    limit: int = 20,
+    offset: int = 0,
+) -> str:
     """List AWX system job templates for maintenance operations.
 
     Use this to discover runnable maintenance tasks such as cleanup and
@@ -149,16 +153,26 @@ def list_system_job_templates(limit: int = 20, offset: int = 0) -> str:
     For playbook execution templates, use list_job_templates.
     Returns template IDs for launch_system_job.
 
+    System job template name searches are performed server-side using AWX's
+    case-insensitive partial-name filter. Prefer this over paging through the
+    whole collection when resolving a name to an ID.
+
     Returns a JSON envelope {count, returned, offset, results}. count is the
     server-side total; if offset + returned < count, call again with
     offset=offset+returned to page through.
 
     Args:
+        template_name: Optional full or partial system job template name,
+            matched case-insensitively.
         limit: Maximum number of results to return
         offset: Number of results to skip
     """
     with get_ansible_client() as client:
         params: dict[str, Any] = {"limit": limit, "offset": offset}
+
+        if template_name and template_name.strip():
+            params["name__icontains"] = template_name.strip()
+
         envelope = handle_pagination(
             client, "/api/v2/system_job_templates/", params, with_meta=True
         )

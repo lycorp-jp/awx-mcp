@@ -501,6 +501,27 @@ MCP クライアント（Claude など）に自然言語でリクエストする
 
 合計 **145 個**のツールを 20 モジュールで提供します。デフォルトでは 141 個が登録され、以下の **opt-in** とマークされた 4 つは `AWX_MCP_ENABLE_CREDENTIAL_MANAGEMENT=true` の場合のみ公開されます（[Credential Management (opt-in)](#credential-management-opt-in) 参照）。
 
+### 名前で検索する
+
+名前を持つコレクションを扱うすべての `list_*` ツールは、任意の名前引数を受け取ります。
+AWX が**サーバーサイド**で大文字小文字を区別しない部分一致として適用するため、
+コレクションをページ送りせずに 1 回の呼び出しで名前を ID に解決できます。
+
+```
+list_job_templates(template_name="deploy")      -> "deploy" に一致するテンプレートのみ
+list_projects(project_name="platform")          -> "platform" に一致するプロジェクトのみ
+```
+
+引数名はリソースに応じて決まります（`project_name`、`inventory_name`、
+`credential_name` など）。`list_hosts` と `list_instances` は `hostname`、
+`list_users` は `username` を使用します。引数を省略した場合は従来どおり全件を
+一覧します。
+
+名前フィルターを持たないものが 2 種類あります。`list_roles` は、AWX がロール名を
+保存せず role フィールドから導出するためフィルターできません。実行記録の一覧
+（`list_jobs`、`list_project_updates` など）は、名前ではなくステータスと親
+テンプレートで照会します。
+
 <details>
 <summary><strong>145個すべてのツールを表示</strong></summary>
 

@@ -501,6 +501,26 @@ Send natural language requests to your MCP client (Claude, etc.) and the server 
 
 **145 tools** across 20 modules. By default 141 are registered; the 4 marked **opt-in** below appear only when `AWX_MCP_ENABLE_CREDENTIAL_MANAGEMENT=true` (see [Credential Management](#credential-management-opt-in)).
 
+### Searching by name
+
+Every `list_*` tool over a named collection takes an optional name argument that
+AWX applies **server-side** as a case-insensitive partial match. Use it to
+resolve a name to an ID in one call instead of paging through the collection:
+
+```
+list_job_templates(template_name="deploy")      -> only templates matching "deploy"
+list_projects(project_name="platform")          -> only projects matching "platform"
+```
+
+The argument is named after the resource (`project_name`, `inventory_name`,
+`credential_name`, …); `list_hosts` and `list_instances` use `hostname`, and
+`list_users` uses `username`. Omitting it lists everything, as before.
+
+Two collections have no name filter: `list_roles` (AWX derives a role's name from
+its role field rather than storing it, so it is not filterable) and the
+execution-record listings (`list_jobs`, `list_project_updates`, and similar),
+which are queried by status and parent template instead.
+
 <details>
 <summary><strong>Show all 145 tools</strong></summary>
 

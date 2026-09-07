@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org).
 ## [Unreleased]
 
 ### Added
+- Name search on every `list_*` tool over a named collection. Each takes an
+  optional name argument that AWX applies server-side as a case-insensitive
+  partial match, so a name resolves to an ID in one call instead of paging
+  through the collection ([#30](https://github.com/lycorp-jp/awx-mcp/issues/30)).
+  The argument is named after the resource (`project_name`, `inventory_name`,
+  `credential_name`, …); `list_hosts` and `list_instances` use `hostname` and
+  `list_users` uses `username`. Omitting it lists everything, unchanged.
+  `list_roles` and the execution-record listings are excluded: AWX derives a
+  role's name from its role field rather than storing it, and execution records
+  are queried by status and parent template.
 - Tool-call arguments are recorded in the usage log as a `params` field so you
   can see how each tool was invoked. Secret-named keys (password, token, key,
   `inputs`, …) and inline `token=`/`password=`/`Bearer` values are redacted, and

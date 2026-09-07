@@ -502,6 +502,27 @@ MCP 클라이언트(Claude 등)에 자연어로 요청하면 서버가 적절한
 
 총 **145개** 도구를 20개 모듈로 제공합니다. 기본값으로 141개가 등록되며, 아래에서 **opt-in**으로 표시된 4개는 `AWX_MCP_ENABLE_CREDENTIAL_MANAGEMENT=true` 설정 시에만 노출됩니다([Credential Management (opt-in)](#credential-management-opt-in) 섹션 참조).
 
+### 이름으로 검색하기
+
+이름을 가진 컬렉션을 다루는 모든 `list_*` 도구는 이름 인자를 선택적으로 받습니다.
+AWX가 이를 **서버 사이드**에서 대소문자 구분 없는 부분 일치로 적용하므로, 컬렉션을
+페이지 단위로 훑지 않고 한 번의 호출로 이름을 ID로 해석할 수 있습니다.
+
+```
+list_job_templates(template_name="deploy")      -> "deploy"와 일치하는 템플릿만
+list_projects(project_name="platform")          -> "platform"과 일치하는 프로젝트만
+```
+
+인자 이름은 리소스에 따라 정해집니다(`project_name`, `inventory_name`,
+`credential_name` 등). `list_hosts`와 `list_instances`는 `hostname`,
+`list_users`는 `username`을 사용합니다. 인자를 생략하면 기존과 동일하게 전체를
+조회합니다.
+
+이름 필터가 없는 두 부류가 있습니다. `list_roles`는 AWX가 역할 이름을 저장하지 않고
+role 필드에서 파생시키기 때문에 필터링할 수 없습니다. 실행 기록 조회
+(`list_jobs`, `list_project_updates` 등)는 이름 대신 상태와 상위 템플릿으로
+조회합니다.
+
 <details>
 <summary><strong>전체 145개 도구 보기</strong></summary>
 

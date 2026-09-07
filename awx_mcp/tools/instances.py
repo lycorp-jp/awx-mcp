@@ -5,6 +5,7 @@ Ansible MCP Server - Instance & Instance Group Tools
 """
 
 import json
+from typing import Any
 
 from ..client import get_ansible_client, handle_pagination
 from ..server import read_tool
@@ -30,32 +31,48 @@ def _ping_topology(client):
 
 
 @read_tool
-def list_instances(limit: int = 20, offset: int = 0) -> str:
+def list_instances(
+    hostname: str = None,
+    limit: int = 20,
+    offset: int = 0,
+) -> str:
     """List AWX cluster instances.
 
     Use this for control-plane visibility into AWX nodes that execute and
     coordinate jobs. Returns instance IDs and capacity-related fields for
     deeper inspection with get_instance.
 
+    Hostname searches are performed server-side using AWX's case-insensitive
+    partial-match filter. Prefer this over paging through the whole collection
+    when resolving a hostname to an ID.
+
     If the privileged /api/v2/instances/ collection is empty (insufficient
     RBAC), this falls back to read-only node topology from /api/v2/ping/
     (returned in its own {"results", "_source", "_note"} shape rather than
-    the envelope below).
+    the envelope below). The fallback is skipped when hostname is set, because
+    /api/v2/ping/ cannot apply the filter and would return unfiltered rows.
 
     Returns a JSON envelope {count, returned, offset, results}. count is the
     server-side total; if offset + returned < count, call again with
     offset=offset+returned to page through.
 
     Args:
+        hostname: Optional full or partial instance hostname, matched
+            case-insensitively.
         limit: Maximum number of instance results to return
         offset: Number of instance results to skip
     """
     with get_ansible_client() as client:
-        params = {"limit": limit, "offset": offset}
+        params: dict[str, Any] = {"limit": limit, "offset": offset}
+        search = hostname.strip() if hostname else ""
+
+        if search:
+            params["hostname__icontains"] = search
+
         instances = handle_pagination(
             client, "/api/v2/instances/", params, with_meta=True
         )
-        if not instances["results"]:
+        if not search and not instances["results"]:
             topology = _ping_topology(client).get("instances", [])
             if topology:
                 return json.dumps(
@@ -88,32 +105,48 @@ def get_instance(instance_id: int) -> str:
 
 
 @read_tool
-def list_instance_groups(limit: int = 20, offset: int = 0) -> str:
+def list_instance_groups(
+    group_name: str = None,
+    limit: int = 20,
+    offset: int = 0,
+) -> str:
     """List AWX instance groups.
 
     Use this to inspect how AWX nodes are grouped for execution capacity and
     job routing. Returns instance group IDs and names for follow-up via
     get_instance_group and scheduling diagnostics.
 
+    Instance group name searches are performed server-side using AWX's
+    case-insensitive partial-name filter. Prefer this over paging through the
+    whole collection when resolving a name to an ID.
+
     If the privileged /api/v2/instance_groups/ collection is empty (insufficient
     RBAC), this falls back to read-only group topology from /api/v2/ping/
     (returned in its own {"results", "_source", "_note"} shape rather than
-    the envelope below).
+    the envelope below). The fallback is skipped when group_name is set, because
+    /api/v2/ping/ cannot apply the filter and would return unfiltered rows.
 
     Returns a JSON envelope {count, returned, offset, results}. count is the
     server-side total; if offset + returned < count, call again with
     offset=offset+returned to page through.
 
     Args:
+        group_name: Optional full or partial instance group name, matched
+            case-insensitively.
         limit: Maximum number of instance group results to return
         offset: Number of instance group results to skip
     """
     with get_ansible_client() as client:
-        params = {"limit": limit, "offset": offset}
+        params: dict[str, Any] = {"limit": limit, "offset": offset}
+        search = group_name.strip() if group_name else ""
+
+        if search:
+            params["name__icontains"] = search
+
         groups = handle_pagination(
             client, "/api/v2/instance_groups/", params, with_meta=True
         )
-        if not groups["results"]:
+        if not search and not groups["results"]:
             topology = _ping_topology(client).get("instance_groups", [])
             if topology:
                 return json.dumps(

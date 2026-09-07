@@ -19,23 +19,37 @@ from ..utils import validate_json_str
 
 
 @read_tool
-def list_inventories(limit: int = 20, offset: int = 0) -> str:
+def list_inventories(
+    inventory_name: str = None,
+    limit: int = 20,
+    offset: int = 0,
+) -> str:
     """List AWX inventories.
 
     Returns inventory IDs, names, and organization links for the top-level
     host/group container in AWX. Use returned inventory_id values with
     get_inventory, list_hosts, list_groups, and create_job_template.
 
+    Inventory name searches are performed server-side using AWX's
+    case-insensitive partial-name filter. Prefer this over paging through the
+    whole collection when resolving a name to an ID.
+
     Returns a JSON envelope {count, returned, offset, results}. count is the
     server-side total; if offset + returned < count, call again with
     offset=offset+returned to page through.
 
     Args:
+        inventory_name: Optional full or partial inventory name, matched
+            case-insensitively.
         limit: Maximum number of results to return
         offset: Number of results to skip
     """
     with get_ansible_client() as client:
-        params = {"limit": limit, "offset": offset}
+        params: dict[str, Any] = {"limit": limit, "offset": offset}
+
+        if inventory_name and inventory_name.strip():
+            params["name__icontains"] = inventory_name.strip()
+
         inventories = handle_pagination(
             client, "/api/v2/inventories/", params, with_meta=True
         )
@@ -153,13 +167,20 @@ def delete_inventory(inventory_id: int) -> str:
 
 @read_tool
 def list_inventory_sources(
-    inventory_id: int = None, limit: int = 20, offset: int = 0
+    inventory_id: int = None,
+    source_name: str = None,
+    limit: int = 20,
+    offset: int = 0,
 ) -> str:
     """List AWX inventory sources.
 
     Use this to inspect dynamic host sync configurations (EC2, GCE, SCM, and
     similar) attached to inventories. For inventory containers themselves, use
     list_inventories instead.
+
+    Inventory source name searches are performed server-side using AWX's
+    case-insensitive partial-name filter. Prefer this over paging through the
+    whole collection when resolving a name to an ID.
 
     Returns a JSON envelope {count, returned, offset, results}. count is the
     server-side total; if offset + returned < count, call again with
@@ -168,11 +189,17 @@ def list_inventory_sources(
     Args:
         inventory_id: Optional ID of inventory to filter sources
             (from list_inventories response)
+        source_name: Optional full or partial inventory source name, matched
+            case-insensitively.
         limit: Maximum number of results to return
         offset: Number of results to skip
     """
     with get_ansible_client() as client:
-        params = {"limit": limit, "offset": offset}
+        params: dict[str, Any] = {"limit": limit, "offset": offset}
+
+        if source_name and source_name.strip():
+            params["name__icontains"] = source_name.strip()
+
         if inventory_id is not None:
             endpoint = f"/api/v2/inventories/{inventory_id}/inventory_sources/"
         else:

@@ -5,6 +5,7 @@ Ansible MCP Server - Group Management Tools
 """
 
 import json
+from typing import Any
 
 from ..client import get_ansible_client, handle_pagination
 from ..server import read_tool, write_tool
@@ -12,12 +13,21 @@ from ..utils import validate_json_str
 
 
 @read_tool
-def list_groups(inventory_id: int = None, limit: int = 20, offset: int = 0) -> str:
+def list_groups(
+    inventory_id: int = None,
+    group_name: str = None,
+    limit: int = 20,
+    offset: int = 0,
+) -> str:
     """List AWX inventory groups.
 
     Returns logical host groupings within inventories and their group IDs for
     membership operations. For individual machine records, use list_hosts
     instead.
+
+    Group name searches are performed server-side using AWX's case-insensitive
+    partial-name filter. Prefer this over paging through the whole collection
+    when resolving a name to an ID.
 
     Returns a JSON envelope {count, returned, offset, results}. count is the
     server-side total; if offset + returned < count, call again with
@@ -26,11 +36,17 @@ def list_groups(inventory_id: int = None, limit: int = 20, offset: int = 0) -> s
     Args:
         inventory_id: Optional ID of inventory to filter groups
             (from list_inventories response)
+        group_name: Optional full or partial group name, matched
+            case-insensitively.
         limit: Maximum number of results to return
         offset: Number of results to skip
     """
     with get_ansible_client() as client:
-        params = {"limit": limit, "offset": offset}
+        params: dict[str, Any] = {"limit": limit, "offset": offset}
+
+        if group_name and group_name.strip():
+            params["name__icontains"] = group_name.strip()
+
         if inventory_id is not None:
             endpoint = f"/api/v2/inventories/{inventory_id}/groups/"
         else:

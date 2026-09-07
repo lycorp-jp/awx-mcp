@@ -19,23 +19,37 @@ class PasswordInput(BaseModel):
 
 
 @read_tool
-def list_users(limit: int = 20, offset: int = 0) -> str:
+def list_users(
+    username: str = None,
+    limit: int = 20,
+    offset: int = 0,
+) -> str:
     """List AWX users.
 
     Use this to enumerate user accounts before assigning team membership or
     RBAC roles in the organizations -> teams -> users model. Returns user IDs
     for get_user, update_user, delete_user, and grant_role_to_user.
 
+    Username searches are performed server-side using AWX's case-insensitive
+    partial-match filter. Prefer this over paging through the whole collection
+    when resolving a username to an ID.
+
     Returns a JSON envelope {count, returned, offset, results}. count is the
     server-side total; if offset + returned < count, call again with
     offset=offset+returned to page through.
 
     Args:
+        username: Optional full or partial username, matched
+            case-insensitively.
         limit: Maximum number of user results to return
         offset: Number of user results to skip
     """
     with get_ansible_client() as client:
-        params = {"limit": limit, "offset": offset}
+        params: dict[str, Any] = {"limit": limit, "offset": offset}
+
+        if username and username.strip():
+            params["username__icontains"] = username.strip()
+
         envelope = handle_pagination(client, "/api/v2/users/", params, with_meta=True)
         return json.dumps(envelope, indent=2)
 

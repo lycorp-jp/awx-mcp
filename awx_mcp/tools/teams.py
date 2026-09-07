@@ -5,18 +5,28 @@ Ansible MCP Server - Team Management Tools
 """
 
 import json
+from typing import Any
 
 from ..client import get_ansible_client, handle_pagination
 from ..server import read_tool, write_tool
 
 
 @read_tool
-def list_teams(organization_id: int = None, limit: int = 20, offset: int = 0) -> str:
+def list_teams(
+    organization_id: int = None,
+    team_name: str = None,
+    limit: int = 20,
+    offset: int = 0,
+) -> str:
     """List AWX teams, optionally scoped to an organization.
 
     Use this to enumerate teams under the organizations -> teams -> users
     hierarchy before assigning RBAC roles. Returns team IDs for get_team,
     update_team, delete_team, and grant_role_to_team.
+
+    Team name searches are performed server-side using AWX's case-insensitive
+    partial-name filter. Prefer this over paging through the whole collection
+    when resolving a name to an ID.
 
     Returns a JSON envelope {count, returned, offset, results}. count is the
     server-side total; if offset + returned < count, call again with
@@ -25,11 +35,16 @@ def list_teams(organization_id: int = None, limit: int = 20, offset: int = 0) ->
     Args:
         organization_id: Optional organization ID to filter teams
             (from list_organizations)
+        team_name: Optional full or partial team name, matched
+            case-insensitively.
         limit: Maximum number of team results to return
         offset: Number of team results to skip
     """
     with get_ansible_client() as client:
-        params = {"limit": limit, "offset": offset}
+        params: dict[str, Any] = {"limit": limit, "offset": offset}
+
+        if team_name and team_name.strip():
+            params["name__icontains"] = team_name.strip()
 
         if organization_id is not None:
             endpoint = f"/api/v2/organizations/{organization_id}/teams/"

@@ -7,6 +7,7 @@ Project CRUD, SCM sync, playbook listing, and project update monitoring.
 """
 
 import json
+from typing import Any
 
 from ..client import (
     DEFAULT_CONNECT_TIMEOUT,
@@ -19,23 +20,37 @@ from ..server import read_tool, write_tool
 
 
 @read_tool
-def list_projects(limit: int = 20, offset: int = 0) -> str:
+def list_projects(
+    project_name: str = None,
+    limit: int = 20,
+    offset: int = 0,
+) -> str:
     """List AWX projects.
 
     Returns SCM project records that supply playbooks for job templates and
     workflows. Use returned project_id values with sync_project,
     list_project_playbooks, and create_job_template.
 
+    Project name searches are performed server-side using AWX's
+    case-insensitive partial-name filter. Prefer this over paging through the
+    whole collection when resolving a name to an ID.
+
     Returns a JSON envelope {count, returned, offset, results}. count is the
     server-side total; if offset + returned < count, call again with
     offset=offset+returned to page through.
 
     Args:
+        project_name: Optional full or partial project name, matched
+            case-insensitively.
         limit: Maximum number of results to return
         offset: Number of results to skip
     """
     with get_ansible_client() as client:
-        params = {"limit": limit, "offset": offset}
+        params: dict[str, Any] = {"limit": limit, "offset": offset}
+
+        if project_name and project_name.strip():
+            params["name__icontains"] = project_name.strip()
+
         envelope = handle_pagination(
             client, "/api/v2/projects/", params, with_meta=True
         )

@@ -12,23 +12,37 @@ from ..server import read_tool, write_tool
 
 
 @read_tool
-def list_organizations(limit: int = 20, offset: int = 0) -> str:
+def list_organizations(
+    organization_name: str = None,
+    limit: int = 20,
+    offset: int = 0,
+) -> str:
     """List AWX organizations.
 
     Use this to discover top-level AWX tenants before working with teams,
     users, inventories, or projects that belong to an organization. Returns
     organization records with IDs used by get_organization and create_team.
 
+    Organization name searches are performed server-side using AWX's
+    case-insensitive partial-name filter. Prefer this over paging through the
+    whole collection when resolving a name to an ID.
+
     Returns a JSON envelope {count, returned, offset, results}. count is the
     server-side total; if offset + returned < count, call again with
     offset=offset+returned to page through.
 
     Args:
+        organization_name: Optional full or partial organization name, matched
+            case-insensitively.
         limit: Maximum number of organization results to return
         offset: Number of organization results to skip
     """
     with get_ansible_client() as client:
-        params = {"limit": limit, "offset": offset}
+        params: dict[str, Any] = {"limit": limit, "offset": offset}
+
+        if organization_name and organization_name.strip():
+            params["name__icontains"] = organization_name.strip()
+
         envelope = handle_pagination(
             client, "/api/v2/organizations/", params, with_meta=True
         )
