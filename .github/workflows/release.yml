@@ -44,7 +44,7 @@ jobs:
         run: |
           wheels=(dist/*.whl)
           uvx --isolated --from "${wheels[0]}" awx-mcp --version
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: release-files
           include-hidden-files: true
