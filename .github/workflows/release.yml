@@ -117,7 +117,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: release-files
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         with:
           go-version: "1.27.2"
           cache: false
