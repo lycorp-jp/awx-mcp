@@ -22,11 +22,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: github/codeql-action/init@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
+      - uses: github/codeql-action/init@bd01fe9e80db3cb1eb1368bd8f61d3eb5f43d1f4 # v4.39.2
         with:
           languages: python
           build-mode: none
-      - uses: github/codeql-action/analyze@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
+      - uses: github/codeql-action/analyze@bd01fe9e80db3cb1eb1368bd8f61d3eb5f43d1f4 # v4.39.2
         with:
           category: /language:python
           # PR code gets no write token and cannot upload SARIF or databases.
@@ -44,11 +44,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: github/codeql-action/init@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
+      - uses: github/codeql-action/init@bd01fe9e80db3cb1eb1368bd8f61d3eb5f43d1f4 # v4.39.2
         with:
           languages: python
           build-mode: none
-      - uses: github/codeql-action/analyze@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
+      - uses: github/codeql-action/analyze@bd01fe9e80db3cb1eb1368bd8f61d3eb5f43d1f4 # v4.39.2
         with:
           category: /language:python
           upload: always

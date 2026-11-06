@@ -31,3 +31,8 @@ updates:
       - "github-actions"
     commit-message:
       prefix: "chore(ci)"
+    # CodeQL's init and analyze actions must use the same version.
+    groups:
+      codeql:
+        patterns:
+          - "github/codeql-action*"
