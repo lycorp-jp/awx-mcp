@@ -9,6 +9,7 @@ independently of the tested AWX version (see [Versioning](#versioning)).
 ## [Unreleased]
 
 ### Added
+- A Star History chart in the main README with light and dark theme support.
 - Five read-only MCP resource templates and three operational runbook prompts,
   filtered by enabled toolsets. Local and central startup register them explicitly,
   and the authenticated proxy relays resources and prompts with pagination and

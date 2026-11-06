@@ -65,6 +65,7 @@ The GIF shows actual MCP `list_jobs(status="failed")` and `get_job_stdout(job_id
 - [Code of Conduct](#code-of-conduct)
 - [Changelog](#changelog)
 - [Security Policy](#security-policy)
+- [Star History](#star-history)
 - [License](#license)
 
 ---
@@ -826,6 +827,18 @@ See [CHANGELOG.md](CHANGELOG.md) for a history of notable changes.
 ## Security Policy
 
 For vulnerability disclosure, the threat model, and security history, see [SECURITY.md](SECURITY.md).
+
+---
+
+## Star History
+
+<a href="https://www.star-history.com/?repos=lycorp-jp%2Fawx-mcp&amp;type=date&amp;legend=top-left">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=lycorp-jp/awx-mcp&amp;type=Date&amp;legend=top-left&amp;theme=dark" />
+    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=lycorp-jp/awx-mcp&amp;type=Date&amp;legend=top-left" />
+    <img alt="Star History chart for lycorp-jp/awx-mcp" src="https://api.star-history.com/svg?repos=lycorp-jp/awx-mcp&amp;type=Date&amp;legend=top-left" />
+  </picture>
+</a>
 
 ---
 
